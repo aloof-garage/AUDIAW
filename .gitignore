@@ -1,0 +1,31 @@
+# Rust
+/target
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+.pnpm-store/
+
+# Tauri
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/build
+/out
+
+# Logs
+*.log
+npm-debug.log*
+
+# Made with Bob

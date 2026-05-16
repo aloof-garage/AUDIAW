@@ -1,0 +1,123 @@
+@import './styles/animations.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Surface Colors - HSL-based neutral scale */
+  --surface-void: hsl(240, 10%, 6%);
+  --surface-level1: hsl(240, 9%, 8%);
+  --surface-level2: hsl(240, 10%, 11%);
+  --surface-level3: hsl(240, 10%, 14%);
+  --surface-level4: hsl(240, 10%, 17%);
+  --surface-level5: hsl(240, 9%, 20%);
+  --surface-overlay: rgba(0, 0, 0, 0.75);
+  --surface-highest: hsl(240, 8%, 24%);
+
+  /* Text Colors - Opacity-based */
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.58);
+  --text-tertiary: rgba(255, 255, 255, 0.35);
+  --text-ghost: rgba(255, 255, 255, 0.18);
+
+  /* Accent Colors */
+  --accent-primary: #3B8BF5;
+  --accent-primary-hover: #2563eb;
+  --accent-primary-active: #1d4ed8;
+
+  /* Status Colors */
+  --status-success: #22C55E;
+  --status-warning: #F59E0B;
+  --status-error: #EF4444;
+  --status-record: #EF4444;
+  --status-record-dim: #8B2020;
+
+  /* Border Colors */
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.12);
+  --border-active: #3B8BF5;
+  --border-focus: #3B8BF5;
+
+  /* Spacing Scale - 4px-based */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-base: 16px;
+  --spacing-lg: 20px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 32px;
+  --spacing-3xl: 40px;
+  --spacing-4xl: 48px;
+
+  /* Motion - Durations */
+  --duration-micro: 60ms;
+  --duration-fast: 90ms;
+  --duration-standard: 120ms;
+  --duration-moderate: 180ms;
+  --duration-slow: 240ms;
+
+  /* Motion - Easing */
+  --easing-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --easing-in: cubic-bezier(0.32, 0, 0.67, 0);
+  --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Typography */
+  font-family: "Inter Variable", Inter, system-ui, -apple-system, sans-serif;
+  font-size: 0.75rem; /* 12px base */
+  line-height: 1.5;
+  font-weight: 400;
+  
+  /* Font feature settings for better rendering */
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--surface-level1);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Custom scrollbar - Using design token colors */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface-level2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-level4);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-level5);
+}
+
+/* Made with Bob */

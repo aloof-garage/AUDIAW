@@ -1,0 +1,22 @@
+[package]
+name = "audiaw-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+audiaw-types = { path = "../audiaw-types" }
+audiaw-audio-io = { path = "../audiaw-audio-io" }
+audiaw-effects = { path = "../audiaw-effects" }
+audiaw-history = { path = "../audiaw-history" }
+tokio = { workspace = true }
+crossbeam = { workspace = true }
+arc-swap = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+name = "audiaw_engine"
+path = "src/lib.rs"

@@ -1,0 +1,21 @@
+[package]
+name = "audiaw-audio-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+audiaw-types = { path = "../audiaw-types" }
+cpal = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+symphonia = { version = "0.5", features = ["mp3", "wav"] }
+rand = "0.8"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[lib]
+name = "audiaw_audio_io"
+path = "src/lib.rs"
