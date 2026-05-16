@@ -1,0 +1,125 @@
+name: Release Desktop Builds
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release_tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: release_tag
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "AUDIAW ${RELEASE_TAG#v}" --notes-file RELEASE_NOTES.md --latest
+          else
+            gh release create "$RELEASE_TAG" --title "AUDIAW ${RELEASE_TAG#v}" --notes-file RELEASE_NOTES.md --latest
+          fi
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            build_command: npm run build:windows
+            artifact_name: AUDIAW-windows-x64-setup.exe
+            artifact_source: target/release/bundle/nsis/*.exe
+            portable_name: AUDIAW-windows-x64-portable.exe
+            portable_source: target/release/audiaw.exe
+          - platform: macos
+            os: macos-latest
+            build_command: npm run build:macos
+            artifact_name: AUDIAW-macos.dmg
+            artifact_source: target/release/bundle/dmg/*.dmg
+          - platform: linux
+            os: ubuntu-22.04
+            build_command: npm run build:linux
+            artifact_name: AUDIAW-linux-x86_64.AppImage
+            artifact_source: target/release/bundle/appimage/*.AppImage
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Rust workspace
+        run: cargo check
+
+      - name: Build desktop bundle
+        run: ${{ matrix.build_command }}
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p dist-release
+          asset="$(ls ${{ matrix.artifact_source }} | head -n 1)"
+          test -n "$asset"
+          cp "$asset" "dist-release/${{ matrix.artifact_name }}"
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cp "${{ matrix.portable_source }}" "dist-release/${{ matrix.portable_name }}"
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: audiaw-${{ matrix.platform }}-${{ needs.create-release.outputs.tag }}
+          path: dist-release/*
+          if-no-files-found: error
+
+      - name: Upload GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" dist-release/* --clobber

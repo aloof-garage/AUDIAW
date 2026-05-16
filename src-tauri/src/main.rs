@@ -5,6 +5,8 @@ use audiaw_audio_io::{decoder, AudioIO};
 use audiaw_engine::{AudioEngine, EngineCommand, process_clip_static};
 use audiaw_project::Project;
 use audiaw_types::*;
+use std::fs;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tracing::{error, info};
@@ -160,6 +162,38 @@ fn get_transport_state(state: State<AppState>) -> Result<String, String> {
 fn get_position(state: State<AppState>) -> Result<u64, String> {
     let engine = state.engine.lock().unwrap();
     Ok(engine.position())
+}
+
+/// Read a UI project document from disk.
+#[tauri::command]
+fn read_project_document(path: String) -> Result<String, String> {
+    fs::read_to_string(Path::new(&path)).map_err(|e| format!("Failed to read project: {}", e))
+}
+
+/// Write a UI project document to disk using a crash-safe replace.
+#[tauri::command]
+fn write_project_document(path: String, contents: String) -> Result<(), String> {
+    let target = Path::new(&path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create project folder: {}", e))?;
+    }
+
+    let temp = target.with_extension("audiaw.tmp");
+    fs::write(&temp, contents).map_err(|e| format!("Failed to write project: {}", e))?;
+    fs::rename(&temp, target).map_err(|e| format!("Failed to finalize project save: {}", e))
+}
+
+/// Write a binary export to disk using a crash-safe replace.
+#[tauri::command]
+fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    let target = Path::new(&path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create export folder: {}", e))?;
+    }
+
+    let temp = target.with_extension("tmp");
+    fs::write(&temp, bytes).map_err(|e| format!("Failed to write export: {}", e))?;
+    fs::rename(&temp, target).map_err(|e| format!("Failed to finalize export: {}", e))
 }
 
 /// Seek playback to a sample position
@@ -419,105 +453,102 @@ fn main() {
     let state_arc = engine.get_state_arc();
     let state_arc_input = state_arc.clone();
     
-    // Initialize audio I/O
-    let mut audio_io = AudioIO::new(config).expect("Failed to initialize audio I/O");
-    audio_io.init_output().expect("Failed to initialize output device");
-    
-    // Initialize input device for recording
-    if let Err(e) = audio_io.init_input() {
-        error!("Failed to initialize input device: {}", e);
-        info!("Recording will not be available");
-    } else {
-        // Start input stream for recording
-        if let Err(e) = audio_io.start_input(move |input_buffer: &[f32]| {
-            // This callback runs in the audio input thread - must be real-time safe!
-            let state = state_arc_input.load();
-            
-            // Only capture if recording
-            if state.recording_track_id.is_some() {
-                // Append input data to recording buffer
-                state_arc_input.rcu(|current| {
-                    let mut new_state = (**current).clone();
-                    if new_state.recording_track_id.is_some() {
-                        new_state.recording_buffer.extend_from_slice(input_buffer);
+    // Initialize audio I/O. Device failures must not prevent project editing,
+    // saving, or offline export from launching in a desktop release.
+    let _audio_io = match AudioIO::new(config) {
+        Ok(mut audio_io) => {
+            if let Err(e) = audio_io.init_output() {
+                error!("Failed to initialize output device: {}", e);
+                info!("Playback will be unavailable until an output device is available");
+                None
+            } else {
+                if let Err(e) = audio_io.init_input() {
+                    error!("Failed to initialize input device: {}", e);
+                    info!("Recording will not be available");
+                } else if let Err(e) = audio_io.start_input(move |input_buffer: &[f32]| {
+                    let state = state_arc_input.load();
+
+                    if state.recording_track_id.is_some() {
+                        state_arc_input.rcu(|current| {
+                            let mut new_state = (**current).clone();
+                            if new_state.recording_track_id.is_some() {
+                                new_state.recording_buffer.extend_from_slice(input_buffer);
+                            }
+                            new_state
+                        });
                     }
-                    new_state
-                });
-            }
-        }) {
-            error!("Failed to start input stream: {}", e);
-            info!("Recording will not be available");
-        } else {
-            info!("Input stream started - recording available");
-        }
-    }
-    
-    // Start output stream with callback
-    audio_io.start_output(move |output_buffer: &mut [f32]| {
-        // This callback runs in the audio thread - must be real-time safe!
-        let state = state_arc.load();
-        
-        let channels = state.config.output_channels;
-        let frames = output_buffer.len() / channels;
-        
-        // Clear output buffer
-        output_buffer.fill(0.0);
-        
-        // Only process if playing or recording
-        if state.transport_state == TransportState::Playing ||
-           state.transport_state == TransportState::Recording {
-            
-            // Check if any tracks are soloed
-            let has_solo = state.tracks.iter().any(|t| t.solo);
-            
-            // Mix all tracks
-            for track in &state.tracks {
-                // Skip muted tracks
-                if track.muted {
-                    continue;
+                }) {
+                    error!("Failed to start input stream: {}", e);
+                    info!("Recording will not be available");
+                } else {
+                    info!("Input stream started - recording available");
                 }
-                
-                // Skip non-solo tracks if any track is soloed
-                if has_solo && !track.solo {
-                    continue;
-                }
-                
-                // Process each clip in the track
-                for clip in &track.clips {
-                    if clip.muted {
-                        continue;
+
+                match audio_io.start_output(move |output_buffer: &mut [f32]| {
+                    let state = state_arc.load();
+                    let channels = state.config.output_channels;
+                    let frames = output_buffer.len() / channels;
+
+                    output_buffer.fill(0.0);
+
+                    if state.transport_state == TransportState::Playing ||
+                       state.transport_state == TransportState::Recording {
+                        let has_solo = state.tracks.iter().any(|t| t.solo);
+
+                        for track in &state.tracks {
+                            if track.muted || (has_solo && !track.solo) {
+                                continue;
+                            }
+
+                            for clip in &track.clips {
+                                if clip.muted {
+                                    continue;
+                                }
+
+                                process_clip_static(
+                                    clip,
+                                    track,
+                                    state.position,
+                                    output_buffer,
+                                    frames,
+                                    channels,
+                                );
+                            }
+                        }
+
+                        for sample in output_buffer.iter_mut() {
+                            *sample *= state.master_volume;
+                            *sample = sample.clamp(-1.0, 1.0);
+                        }
+
+                        state_arc.rcu(|current| {
+                            let mut new_state = (**current).clone();
+                            if new_state.transport_state == TransportState::Playing ||
+                               new_state.transport_state == TransportState::Recording {
+                                new_state.position += frames as u64;
+                            }
+                            new_state
+                        });
                     }
-                    
-                    process_clip_static(
-                        clip,
-                        track,
-                        state.position,
-                        output_buffer,
-                        frames,
-                        channels,
-                    );
+                }) {
+                    Ok(()) => {
+                        info!("Audio stream started");
+                        Some(audio_io)
+                    }
+                    Err(e) => {
+                        error!("Failed to start audio stream: {}", e);
+                        info!("Playback will be unavailable until an output device is available");
+                        None
+                    }
                 }
             }
-            
-            // Apply master volume and clipping
-            for sample in output_buffer.iter_mut() {
-                *sample *= state.master_volume;
-                *sample = sample.clamp(-1.0, 1.0);
-            }
-            
-            // Advance playback position
-            state_arc.rcu(|current| {
-                let mut new_state = (**current).clone();
-                if new_state.transport_state == TransportState::Playing ||
-                   new_state.transport_state == TransportState::Recording {
-                    new_state.position += frames as u64;
-                }
-                new_state
-            });
         }
-    }).expect("Failed to start audio stream");
-    
-    info!("Audio stream started");
+        Err(e) => {
+            error!("Failed to initialize audio I/O: {}", e);
+            info!("AUDIAW will continue with project editing and offline export available");
+            None
+        }
+    };
     
     let engine = Arc::new(Mutex::new(engine));
     
@@ -537,6 +568,9 @@ fn main() {
             load_project,
             save_project,
             get_project_metadata,
+            read_project_document,
+            write_project_document,
+            write_binary_file,
             get_tracks,
             add_track,
             remove_track,

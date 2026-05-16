@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "productName": "AUDIAW",
-  "version": "0.1.0",
-  "identifier": "com.audiaw.app",
+  "version": "1.0.0",
+  "identifier": "com.audiaw.desktop",
   "build": {
     "beforeDevCommand": "vite",
     "beforeBuildCommand": "vite build",
@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "dmg", "appimage", "deb"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,8 +39,8 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "copyright": "Copyright © 2026 AUDIAW Contributors",
-    "category": "AudioVideo",
+    "copyright": "Copyright (c) 2026 AUDIAW Contributors",
+    "category": "Music",
     "shortDescription": "Professional Open-Source Digital Audio Workstation",
     "longDescription": "AUDIAW is a cross-platform DAW built with Rust and React, designed to provide professional music production capabilities with zero cost and complete transparency.",
     "windows": {
@@ -50,7 +50,7 @@
     },
     "macOS": {
       "frameworks": [],
-      "minimumSystemVersion": "10.13",
+      "minimumSystemVersion": "10.15",
       "exceptionDomain": "",
       "signingIdentity": null,
       "providerShortName": null,

@@ -1,10 +1,10 @@
 [package]
 name = "audiaw"
-version = "0.1.0"
+version = "1.0.0"
 description = "Professional Open-Source Digital Audio Workstation"
 authors = ["AUDIAW Contributors"]
 license = "GPL-3.0"
-repository = "https://github.com/audiaw/audiaw"
+repository = "https://github.com/aloof-garage/AUDIAW"
 edition = "2021"
 
 [build-dependencies]
@@ -12,7 +12,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "2.0", features = ["devtools"] }
+tauri = { version = "2.0", features = [] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"

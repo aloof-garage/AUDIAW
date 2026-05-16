@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 type TrackType = 'audio' | 'midi' | 'return' | 'master';
@@ -12,6 +14,7 @@ type Clip = {
   s: number;
   l: number;
   kind: 'audio' | 'midi';
+  name?: string;
   sample?: string;
   notes?: Note[];
 };
@@ -173,25 +176,210 @@ const COMMANDS = [
   { id: 'zout', label: 'Zoom Out', kbd: 'Ctrl+-', cat: 'View' },
   { id: 'export', label: 'Export Mixdown', kbd: 'Ctrl+E', cat: 'Project' },
   { id: 'save', label: 'Save Project', kbd: 'Ctrl+S', cat: 'Project' },
-  { id: 'load', label: 'Load Saved Project', kbd: 'Ctrl+O', cat: 'Project' },
+  { id: 'saveas', label: 'Save Project As...', kbd: 'Ctrl+Shift+S', cat: 'Project' },
+  { id: 'load', label: 'Open Project...', kbd: 'Ctrl+O', cat: 'Project' },
   { id: 'new', label: 'New Project', kbd: 'Ctrl+N', cat: 'Project' },
+  { id: 'renameproj', label: 'Rename Project', kbd: 'Ctrl+Shift+R', cat: 'Project' },
+  { id: 'dupeproj', label: 'Duplicate Project', kbd: 'Ctrl+Shift+D', cat: 'Project' },
   { id: 'undo', label: 'Undo', kbd: 'Ctrl+Z', cat: 'Edit' },
   { id: 'redo', label: 'Redo', kbd: 'Ctrl+Y', cat: 'Edit' },
+  { id: 'dupeclip', label: 'Duplicate Selected Clip', kbd: 'Ctrl+D', cat: 'Edit' },
+  { id: 'splitclip', label: 'Split Selected Clip', kbd: 'C', cat: 'Edit' },
+  { id: 'delclip', label: 'Delete Selected Clip', kbd: 'Delete', cat: 'Edit' },
   { id: 'addau', label: 'Add Audio Track', kbd: 'Ctrl+T', cat: 'Track' },
   { id: 'addmi', label: 'Add MIDI Track', kbd: 'Ctrl+M', cat: 'Track' },
 ];
 
-const PROJECT_KEY = 'audiaw.project.v1';
+const APP_VERSION = '1.0.0';
+const PROJECT_KEY = 'audiaw.project.v2';
+const LEGACY_PROJECT_KEY = 'audiaw.project.v1';
+const AUTOSAVE_KEY = 'audiaw.autosave.v1';
+const RECENTS_KEY = 'audiaw.recents.v1';
 const BPM = 128;
 const ARRANGEMENT_BEATS = 32;
 
-type ProjectData = {
-  version: 1;
+type WorkspaceState = {
+  view: ViewMode;
+  leftOpen: boolean;
+  rightOpen: boolean;
+  bottomOpen: boolean;
+  browserTab: BrowserTab;
+  tool: ToolMode;
+  zoom: number;
+  selectedTrackId: string;
+  selectedClipId: string | null;
+};
+
+type RecentProject = {
+  id: string;
   name: string;
-  bpm: number;
-  tracks: PersistedTrack[];
+  path?: string;
   savedAt: string;
 };
+
+type ProjectData = {
+  version: 2;
+  id: string;
+  name: string;
+  bpm: number;
+  sampleRate: number;
+  appVersion: string;
+  createdAt: string;
+  tracks: PersistedTrack[];
+  assets: Array<{ id: string; name: string; source: string; type: 'sample' | 'plugin' | 'project'; trackId?: string; clipId?: string }>;
+  metadata: {
+    durationBeats: number;
+    trackCount: number;
+    clipCount: number;
+    notes: string;
+  };
+  workspace: WorkspaceState;
+  playback: {
+    beat: number;
+    loop: boolean;
+  };
+  settings: {
+    autoSave: boolean;
+    snap: '1/4';
+    exportFormat: 'wav';
+  };
+  savedAt: string;
+  path?: string;
+};
+
+const isTauriRuntime = () => '__TAURI_INTERNALS__' in window;
+
+const makeId = () => {
+  if ('crypto' in window && 'randomUUID' in window.crypto) return window.crypto.randomUUID();
+  return `audiaw-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+};
+
+const safeProjectName = (name: string) =>
+  name.trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, '-').replace(/\s+/g, ' ').slice(0, 80) || 'Untitled Project';
+
+const downloadTextFile = (filename: string, contents: string) => {
+  const url = URL.createObjectURL(new Blob([contents], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const downloadBlob = (filename: string, blob: Blob) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const blobToBytes = async (blob: Blob) => Array.from(new Uint8Array(await blob.arrayBuffer()));
+
+const collectAssets = (tracks: PersistedTrack[]): ProjectData['assets'] =>
+  tracks.flatMap((track) =>
+    (track.clips ?? []).flatMap((clip) => {
+      const assets: ProjectData['assets'] = [];
+      if (clip.sample) assets.push({ id: `${clip.id}-sample`, name: clip.sample, source: clip.sample, type: 'sample', trackId: track.id, clipId: clip.id });
+      for (const effect of track.effects ?? []) assets.push({ id: `${track.id}-${effect}`, name: effect, source: effect, type: 'plugin', trackId: track.id });
+      return assets;
+    }),
+  );
+
+const defaultWorkspace = (): WorkspaceState => ({
+  view: 'arrangement',
+  leftOpen: true,
+  rightOpen: true,
+  bottomOpen: false,
+  browserTab: 'samples',
+  tool: 'pointer',
+  zoom: 48,
+  selectedTrackId: 't1',
+  selectedClipId: null,
+});
+
+function buildProjectData(input: {
+  id: string;
+  name: string;
+  tracks: Track[];
+  workspace: WorkspaceState;
+  loop: boolean;
+  beat: number;
+  createdAt: string;
+  savedAt?: string;
+  path?: string;
+}): ProjectData {
+  const savedAt = input.savedAt ?? new Date().toISOString();
+  const tracks = input.tracks.map(normalizeTrack);
+  const clipCount = tracks.reduce((total, track) => total + track.clips.length, 0);
+  return {
+    version: 2,
+    id: input.id,
+    name: safeProjectName(input.name),
+    bpm: BPM,
+    sampleRate: 48000,
+    appVersion: APP_VERSION,
+    createdAt: input.createdAt,
+    tracks,
+    assets: collectAssets(tracks),
+    metadata: {
+      durationBeats: ARRANGEMENT_BEATS,
+      trackCount: tracks.length,
+      clipCount,
+      notes: '',
+    },
+    workspace: input.workspace,
+    playback: {
+      beat: clamp(input.beat, 0, ARRANGEMENT_BEATS),
+      loop: input.loop,
+    },
+    settings: {
+      autoSave: true,
+      snap: '1/4',
+      exportFormat: 'wav',
+    },
+    savedAt,
+    path: input.path,
+  };
+}
+
+function normalizeProjectData(raw: Partial<ProjectData> & { version?: number; tracks?: PersistedTrack[] }): ProjectData {
+  const now = new Date().toISOString();
+  const tracks = Array.isArray(raw.tracks) ? raw.tracks.map(normalizeTrack) : patchInitialTracks();
+  return buildProjectData({
+    id: typeof raw.id === 'string' ? raw.id : makeId(),
+    name: typeof raw.name === 'string' ? raw.name : 'Untitled Project',
+    tracks,
+    workspace: { ...defaultWorkspace(), ...(raw.workspace ?? {}) },
+    loop: Boolean(raw.playback?.loop),
+    beat: Number(raw.playback?.beat ?? 0),
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
+    savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : now,
+    path: typeof raw.path === 'string' ? raw.path : undefined,
+  });
+}
+
+function loadProjectFromStorage(): ProjectData {
+  for (const key of [AUTOSAVE_KEY, PROJECT_KEY, LEGACY_PROJECT_KEY]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw) return normalizeProjectData(JSON.parse(raw));
+    } catch {
+      window.localStorage.removeItem(key);
+    }
+  }
+  return normalizeProjectData({ name: 'Untitled Project', tracks: INIT_TRACKS });
+}
+
+function loadRecentProjects(): RecentProject[] {
+  try {
+    const recents = JSON.parse(window.localStorage.getItem(RECENTS_KEY) ?? '[]') as RecentProject[];
+    return Array.isArray(recents) ? recents.filter((item) => item.id && item.name && item.savedAt).slice(0, 12) : [];
+  } catch {
+    return [];
+  }
+}
 
 const dbToGain = (db: number) => Math.pow(10, db / 20);
 const beatToSeconds = (beat: number, bpm = BPM) => (beat * 60) / bpm;
@@ -329,9 +517,10 @@ function scheduleKick(ctx: BaseAudioContext, destination: AudioNode, at: number,
 function scheduleNoiseHit(ctx: BaseAudioContext, destination: AudioNode, at: number, duration: number, tone: 'snare' | 'hat' | 'vocal' | 'fx', nodes: AudioScheduledSourceNode[]) {
   const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * duration)), ctx.sampleRate);
   const data = buffer.getChannelData(0);
+  const noise = mkRng(hashStr(`${tone}:${Math.round(at * 1000)}:${Math.round(duration * 1000)}`));
   for (let i = 0; i < data.length; i += 1) {
     const env = Math.pow(1 - i / data.length, tone === 'hat' ? 2.5 : 1.2);
-    data[i] = (Math.random() * 2 - 1) * env;
+    data[i] = (noise() * 2 - 1) * env;
   }
   const src = ctx.createBufferSource();
   const filter = ctx.createBiquadFilter();
@@ -522,7 +711,7 @@ function StartupScreen({ onDone }: { onDone: () => void }) {
         zIndex: 99999,
         opacity: out ? 0 : 1,
         transition: `opacity 360ms ${DS.ease}`,
-        background: DS.s0,
+        backgroundColor: DS.s0,
         backgroundImage: dotGrid(0.03),
         backgroundSize: '20px 20px',
         display: 'flex',
@@ -687,7 +876,7 @@ const miniButton: React.CSSProperties = {
   fontSize: 11,
 };
 
-function BrowserPanel({ open, tab, onTab, onUse, onSample, onPlugin }: { open: boolean; tab: BrowserTab; onTab: (tab: BrowserTab) => void; onUse: (msg: string) => void; onSample: (sample: string) => void; onPlugin: (plugin: string) => void }) {
+function BrowserPanel({ open, tab, onTab, onUse, onSample, onPlugin, recentProjects, onOpenProject }: { open: boolean; tab: BrowserTab; onTab: (tab: BrowserTab) => void; onUse: (msg: string) => void; onSample: (sample: string) => void; onPlugin: (plugin: string) => void; recentProjects: RecentProject[]; onOpenProject: (path?: string) => void }) {
   const [query, setQuery] = useState('');
   if (!open) return null;
   const sampleList = SAMPLES.filter((item) => item.toLowerCase().includes(query.toLowerCase()));
@@ -708,17 +897,27 @@ function BrowserPanel({ open, tab, onTab, onUse, onSample, onPlugin }: { open: b
         ))}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-        {tab === 'samples' && sampleList.map((item) => <BrowserRow key={item} name={item} meta="48kHz . 24-bit" onClick={() => onSample(item)} />)}
-        {tab === 'plugins' && pluginList.map((item) => <BrowserRow key={item.name} name={item.name} meta={`${item.type} . ${item.fmt}`} onClick={() => onPlugin(item.name)} />)}
-        {tab === 'projects' && ['Untitled Project', 'Club Sketch 128', 'Vocal Session', 'Live Set Template'].map((item) => <BrowserRow key={item} name={item} meta="AUDIAW project" onClick={() => onUse(`${item} opened`)} />)}
+        {tab === 'samples' && sampleList.map((item) => <BrowserRow key={item} name={item} meta="48kHz . 24-bit" dragData={`sample:${item}`} onClick={() => onSample(item)} />)}
+        {tab === 'plugins' && pluginList.map((item) => <BrowserRow key={item.name} name={item.name} meta={`${item.type} . ${item.fmt}`} dragData={`plugin:${item.name}`} onClick={() => onPlugin(item.name)} />)}
+        {tab === 'projects' && recentProjects.length === 0 && <BrowserRow name="Open project..." meta="Choose an .audiaw file" onClick={() => onOpenProject()} />}
+        {tab === 'projects' && recentProjects.map((item) => <BrowserRow key={`${item.id}-${item.path ?? item.savedAt}`} name={item.name} meta={item.path ? item.path : `Autosaved ${new Date(item.savedAt).toLocaleString()}`} onClick={() => item.path ? onOpenProject(item.path) : onUse(`${item.name} is stored in local autosave`)} />)}
       </div>
     </aside>
   );
 }
 
-function BrowserRow({ name, meta, onClick }: { name: string; meta: string; onClick: () => void }) {
+function BrowserRow({ name, meta, dragData, onClick }: { name: string; meta: string; dragData?: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} draggable style={{ width: '100%', display: 'grid', gridTemplateColumns: '22px 1fr', gap: 8, alignItems: 'center', background: 'transparent', border: 0, borderBottom: `1px solid ${DS.bs}`, padding: '8px 4px', textAlign: 'left', cursor: 'grab' }}>
+    <button
+      onClick={onClick}
+      draggable={Boolean(dragData)}
+      onDragStart={(event) => {
+        if (!dragData) return;
+        event.dataTransfer.setData('application/audiaw', dragData);
+        event.dataTransfer.effectAllowed = 'copy';
+      }}
+      style={{ width: '100%', display: 'grid', gridTemplateColumns: '22px 1fr', gap: 8, alignItems: 'center', background: 'transparent', border: 0, borderBottom: `1px solid ${DS.bs}`, padding: '8px 4px', textAlign: 'left', cursor: dragData ? 'grab' : 'pointer' }}
+    >
       <div style={{ width: 18, height: 18, border: `1px solid ${DS.bi}`, background: DS.s3, display: 'flex', alignItems: 'center', justifyContent: 'center', color: DS.t4 }}>
         <Glyph name="f" size={9} />
       </div>
@@ -775,13 +974,16 @@ function ArrangementView(props: {
   tracks: Track[];
   selId: string;
   selClip: string | null;
+  tool: ToolMode;
   zoom: number;
   beats: number;
   loop: boolean;
   onSelectTrack: (id: string) => void;
   onSelectClip: (id: string) => void;
   onMoveClip: (trackId: string, clipId: string, start: number) => void;
+  onResizeClip: (trackId: string, clipId: string, start: number, length: number) => void;
   onCreateClip: (trackId: string, start: number) => void;
+  onDropSample: (trackId: string, sample: string, start: number) => void;
   onMute: (id: string) => void;
   onSolo: (id: string) => void;
   onArm: (id: string) => void;
@@ -793,8 +995,8 @@ function ArrangementView(props: {
   const contentWidth = totalBeats * props.zoom;
 
   return (
-    <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: DS.s0 }}>
-      <div style={{ width: trackWidth, background: DS.s1, borderRight: `1px solid ${DS.bs}`, flexShrink: 0 }}>
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden', backgroundColor: DS.s0 }}>
+      <div style={{ width: trackWidth, backgroundColor: DS.s1, borderRight: `1px solid ${DS.bs}`, flexShrink: 0 }}>
         <PanelTitle title="Tracks" right={`${props.tracks.length}`} />
         {props.tracks.map((track) => (
           <TrackHeader key={track.id} track={track} selected={props.selId === track.id} onSelect={() => props.onSelectTrack(track.id)} onMute={() => props.onMute(track.id)} onSolo={() => props.onSolo(track.id)} onArm={() => props.onArm(track.id)} onCtx={(x, y) => props.onTrackCtx(track.id, x, y)} />
@@ -802,7 +1004,7 @@ function ArrangementView(props: {
       </div>
       <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
         <div style={{ minWidth: contentWidth, position: 'relative' }}>
-          <div style={{ height: 34, position: 'sticky', top: 0, zIndex: 4, background: DS.s2, borderBottom: `1px solid ${DS.bs}`, backgroundImage: `linear-gradient(to right, ${DS.bi} 1px, transparent 1px)`, backgroundSize: `${props.zoom * 4}px 100%` }}>
+          <div style={{ height: 34, position: 'sticky', top: 0, zIndex: 4, backgroundColor: DS.s2, borderBottom: `1px solid ${DS.bs}`, backgroundImage: `linear-gradient(to right, ${DS.bi} 1px, transparent 1px)`, backgroundSize: `${props.zoom * 4}px 100%` }}>
             {Array.from({ length: totalBeats / 4 + 1 }, (_, i) => (
               <div key={i} style={{ position: 'absolute', left: i * props.zoom * 4 + 8, top: 11, fontFamily: DS.mono, color: DS.t4, fontSize: 9 }}>{i + 1}</div>
             ))}
@@ -811,6 +1013,17 @@ function ArrangementView(props: {
           {props.tracks.map((track) => (
             <div
               key={track.id}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('application/audiaw')) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                const payload = event.dataTransfer.getData('application/audiaw');
+                if (!payload.startsWith('sample:')) return;
+                event.preventDefault();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const start = Math.max(0, Math.round((event.clientX - bounds.left) / props.zoom));
+                props.onDropSample(track.id, payload.slice('sample:'.length), start);
+              }}
               onDoubleClick={(event) => {
                 const bounds = event.currentTarget.getBoundingClientRect();
                 props.onCreateClip(track.id, Math.max(0, Math.round((event.clientX - bounds.left) / props.zoom)));
@@ -819,13 +1032,13 @@ function ArrangementView(props: {
                 height: track.h,
                 position: 'relative',
                 borderBottom: `1px solid ${DS.bs}`,
-                background: props.selId === track.id ? 'rgba(255,255,255,0.026)' : DS.s0,
+                backgroundColor: props.selId === track.id ? 'rgba(255,255,255,0.026)' : DS.s0,
                 backgroundImage: `linear-gradient(to right, ${DS.bs} 1px, transparent 1px), linear-gradient(to right, ${DS.t5} 1px, transparent 1px)`,
                 backgroundSize: `${props.zoom}px 100%, ${props.zoom * 4}px 100%`,
               }}
             >
               {track.clips.map((clip) => (
-                <ClipBlock key={clip.id} track={track} clip={clip} zoom={props.zoom} selected={props.selClip === clip.id} onSelect={() => { props.onSelectTrack(track.id); props.onSelectClip(clip.id); }} onMove={(start) => props.onMoveClip(track.id, clip.id, start)} onCtx={(x, y) => props.onClipCtx(track.id, clip.id, x, y)} />
+                <ClipBlock key={clip.id} track={track} clip={clip} tool={props.tool} zoom={props.zoom} selected={props.selClip === clip.id} onSelect={() => { props.onSelectTrack(track.id); props.onSelectClip(clip.id); }} onMove={(start) => props.onMoveClip(track.id, clip.id, start)} onResize={(start, length) => props.onResizeClip(track.id, clip.id, start, length)} onCtx={(x, y) => props.onClipCtx(track.id, clip.id, x, y)} />
               ))}
             </div>
           ))}
@@ -839,39 +1052,98 @@ function ArrangementView(props: {
 function ClipBlock(props: {
   track: Track;
   clip: Clip;
+  tool: ToolMode;
   zoom: number;
   selected: boolean;
   onSelect: () => void;
   onMove: (start: number) => void;
+  onResize: (start: number, length: number) => void;
   onCtx: (x: number, y: number) => void;
 }) {
-  const [drag, setDrag] = useState<{ startX: number; startBeat: number } | null>(null);
+  const [drag, setDrag] = useState<{ mode: 'move' | 'resize-left' | 'resize-right'; startX: number; startBeat: number; startLength: number } | null>(null);
+  const [preview, setPreview] = useState<{ s: number; l: number } | null>(null);
   const values = useMemo(() => genWave(props.clip.id, 44), [props.clip.id]);
+  const displayStart = preview?.s ?? props.clip.s;
+  const displayLength = preview?.l ?? props.clip.l;
 
   useEffect(() => {
     if (!drag) return undefined;
-    const move = (event: MouseEvent) => props.onMove(Math.max(0, Math.round(drag.startBeat + (event.clientX - drag.startX) / props.zoom)));
-    const up = () => setDrag(null);
+    let current = { s: drag.startBeat, l: drag.startLength };
+    const move = (event: MouseEvent) => {
+      const delta = Math.round((event.clientX - drag.startX) / props.zoom);
+      if (drag.mode === 'move') {
+        current = { s: Math.max(0, drag.startBeat + delta), l: drag.startLength };
+        setPreview(current);
+        return;
+      }
+      if (drag.mode === 'resize-left') {
+        const nextStart = Math.max(0, Math.min(drag.startBeat + drag.startLength - 1, drag.startBeat + delta));
+        current = { s: nextStart, l: Math.max(1, drag.startLength + drag.startBeat - nextStart) };
+        setPreview(current);
+        return;
+      }
+      current = { s: drag.startBeat, l: Math.max(1, drag.startLength + delta) };
+      setPreview(current);
+    };
+    const up = () => {
+      if (drag.mode === 'move' && current.s !== drag.startBeat) {
+        props.onMove(current.s);
+      }
+      if (drag.mode !== 'move' && (current.s !== drag.startBeat || current.l !== drag.startLength)) {
+        props.onResize(current.s, current.l);
+      }
+      setPreview(null);
+      setDrag(null);
+    };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
     return () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
     };
-  }, [drag, props]);
+  }, [drag, props.onMove, props.onResize, props.zoom]);
 
   return (
     <div
-      onMouseDown={(event) => { props.onSelect(); setDrag({ startX: event.clientX, startBeat: props.clip.s }); }}
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        props.onSelect();
+        setPreview({ s: props.clip.s, l: props.clip.l });
+        setDrag({ mode: props.tool === 'scissors' ? 'resize-right' : 'move', startX: event.clientX, startBeat: props.clip.s, startLength: props.clip.l });
+      }}
       onContextMenu={(event) => { event.preventDefault(); props.onCtx(event.clientX, event.clientY); }}
-      style={{ position: 'absolute', left: props.clip.s * props.zoom + 4, top: 6, width: Math.max(28, props.clip.l * props.zoom - 8), height: props.track.h - 12, borderRadius: 3, border: `1px solid ${props.selected ? DS.t2 : 'rgba(255,255,255,0.16)'}`, background: `linear-gradient(180deg, ${props.track.color}33, ${props.track.color}18)`, cursor: 'grab', overflow: 'hidden', boxShadow: props.selected ? '0 0 0 1px rgba(255,255,255,0.18)' : 'none' }}
+      style={{ position: 'absolute', left: displayStart * props.zoom + 4, top: 6, width: Math.max(28, displayLength * props.zoom - 8), height: props.track.h - 12, borderRadius: 3, border: `1px solid ${props.selected ? DS.t2 : 'rgba(255,255,255,0.16)'}`, background: `linear-gradient(180deg, ${props.track.color}33, ${props.track.color}18)`, cursor: 'grab', overflow: 'hidden', boxShadow: props.selected ? '0 0 0 1px rgba(255,255,255,0.18)' : 'none' }}
     >
       <div style={{ height: 18, display: 'flex', alignItems: 'center', padding: '0 7px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <span style={{ fontFamily: DS.mono, fontSize: 9, color: DS.t1, letterSpacing: '0.03em' }}>{props.track.name}</span>
+        <span style={{ fontFamily: DS.mono, fontSize: 9, color: DS.t1, letterSpacing: '0.03em' }}>{props.clip.name ?? props.clip.sample ?? props.track.name}</span>
       </div>
       <div style={{ position: 'absolute', inset: '22px 6px 5px', display: 'flex', alignItems: 'center', gap: 2 }}>
         {values.map((value, index) => <div key={index} style={{ flex: 1, height: `${value * 100}%`, background: props.track.type === 'midi' ? `${props.track.color}88` : 'rgba(255,255,255,0.34)', minWidth: 1 }} />)}
       </div>
+      {props.selected && (
+        <>
+          <button
+            aria-label="Resize clip start"
+            onMouseDown={(event) => {
+              event.stopPropagation();
+              props.onSelect();
+              setPreview({ s: props.clip.s, l: props.clip.l });
+              setDrag({ mode: 'resize-left', startX: event.clientX, startBeat: props.clip.s, startLength: props.clip.l });
+            }}
+            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, border: 0, background: 'rgba(255,255,255,0.18)', cursor: 'ew-resize' }}
+          />
+          <button
+            aria-label="Resize clip end"
+            onMouseDown={(event) => {
+              event.stopPropagation();
+              props.onSelect();
+              setPreview({ s: props.clip.s, l: props.clip.l });
+              setDrag({ mode: 'resize-right', startX: event.clientX, startBeat: props.clip.s, startLength: props.clip.l });
+            }}
+            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 7, border: 0, background: 'rgba(255,255,255,0.18)', cursor: 'ew-resize' }}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -887,7 +1159,7 @@ function Meter({ level, width = 4 }: { level: number; width?: number }) {
 
 function MixerView({ tracks, selectedId, meters, playing, onSelect, onVolume, onPan }: { tracks: Track[]; selectedId: string; meters: Record<string, number>; playing: boolean; onSelect: (id: string) => void; onVolume: (id: string, volume: number) => void; onPan: (id: string, pan: number) => void }) {
   return (
-    <div style={{ flex: 1, overflow: 'auto', background: DS.s0, backgroundImage: dotGrid(0.018), backgroundSize: '20px 20px', padding: 16, display: 'flex', gap: 8, alignItems: 'stretch' }}>
+    <div style={{ flex: 1, overflow: 'auto', backgroundColor: DS.s0, backgroundImage: dotGrid(0.018), backgroundSize: '20px 20px', padding: 16, display: 'flex', gap: 8, alignItems: 'stretch' }}>
       {tracks.map((track) => (
         <div key={track.id} onClick={() => onSelect(track.id)} style={{ width: 82, minWidth: 82, border: `1px solid ${selectedId === track.id ? DS.bh : DS.bi}`, background: selectedId === track.id ? DS.s4 : DS.s2, borderRadius: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 8, gap: 8 }}>
           <div style={{ width: '100%', height: 2, background: track.color, opacity: track.muted ? 0.25 : 0.8 }} />
@@ -913,8 +1185,8 @@ function PianoRollView({ track, selectedClip, onSelectClip, onAddNote, onUpdateN
   const pxPerBeat = 92;
   const rowHeight = 28;
   return (
-    <div style={{ flex: 1, display: 'flex', background: DS.s0 }}>
-      <div style={{ width: 76, background: DS.s1, borderRight: `1px solid ${DS.bs}` }}>
+    <div style={{ flex: 1, display: 'flex', backgroundColor: DS.s0 }}>
+      <div style={{ width: 76, backgroundColor: DS.s1, borderRight: `1px solid ${DS.bs}` }}>
         <PanelTitle title="Keys" />
         {['C5', 'B4', 'A#4', 'A4', 'G#4', 'G4', 'F#4', 'F4', 'E4', 'D#4', 'D4', 'C#4', 'C4'].map((key) => (
           <div key={key} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 12, borderBottom: `1px solid ${DS.bs}`, background: key.includes('#') ? DS.s4 : DS.s2, fontFamily: DS.mono, fontSize: 9, color: DS.t4 }}>{key}</div>
@@ -948,15 +1220,27 @@ function PianoRollView({ track, selectedClip, onSelectClip, onAddNote, onUpdateN
 
 function NoteBlock({ note, clipId, color, pxPerBeat, pitchTop, rowHeight, onUpdate, onDelete }: { note: Note; clipId: string; color: string; pxPerBeat: number; pitchTop: number; rowHeight: number; onUpdate: (clipId: string, noteId: string, patch: Partial<Note>) => void; onDelete: (clipId: string, noteId: string) => void }) {
   const [drag, setDrag] = useState<{ x: number; y: number; s: number; pitch: number } | null>(null);
+  const [preview, setPreview] = useState<{ s: number; pitch: number } | null>(null);
+  const displayStart = preview?.s ?? note.s;
+  const displayPitch = preview?.pitch ?? note.pitch;
+
   useEffect(() => {
     if (!drag) return undefined;
+    let current = { s: drag.s, pitch: drag.pitch };
     const move = (event: MouseEvent) => {
-      onUpdate(clipId, note.id, {
+      current = {
         s: clamp(Math.round((drag.s + (event.clientX - drag.x) / pxPerBeat) * 4) / 4, 0, 31),
         pitch: clamp(drag.pitch - Math.round((event.clientY - drag.y) / rowHeight), 36, 84),
-      });
+      };
+      setPreview(current);
     };
-    const up = () => setDrag(null);
+    const up = () => {
+      if (current.s !== drag.s || current.pitch !== drag.pitch) {
+        onUpdate(clipId, note.id, current);
+      }
+      setPreview(null);
+      setDrag(null);
+    };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
     return () => {
@@ -967,10 +1251,14 @@ function NoteBlock({ note, clipId, color, pxPerBeat, pitchTop, rowHeight, onUpda
 
   return (
     <div
-      onMouseDown={(event) => { event.stopPropagation(); setDrag({ x: event.clientX, y: event.clientY, s: note.s, pitch: note.pitch }); }}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        setPreview({ s: note.s, pitch: note.pitch });
+        setDrag({ x: event.clientX, y: event.clientY, s: note.s, pitch: note.pitch });
+      }}
       onDoubleClick={(event) => { event.stopPropagation(); onDelete(clipId, note.id); }}
       title="Drag to move. Double-click to delete."
-      style={{ position: 'absolute', left: note.s * pxPerBeat + 20, top: (pitchTop - note.pitch) * rowHeight + 28, width: Math.max(18, note.l * pxPerBeat), height: 15, borderRadius: 2, background: `${color}99`, border: `1px solid ${color}`, cursor: 'grab' }}
+      style={{ position: 'absolute', left: displayStart * pxPerBeat + 20, top: (pitchTop - displayPitch) * rowHeight + 28, width: Math.max(18, note.l * pxPerBeat), height: 15, borderRadius: 2, background: `${color}99`, border: `1px solid ${color}`, cursor: 'grab' }}
     />
   );
 }
@@ -1115,34 +1403,22 @@ function CommandPalette({ open, onClose, onExec }: { open: boolean; onClose: () 
   );
 }
 
-function ExportDialog({ open, onClose, onRender }: { open: boolean; onClose: () => void; onRender: () => Promise<void> }) {
+function ExportDialog({ open, projectName, onClose, onRender }: { open: boolean; projectName: string; onClose: () => void; onRender: (sampleRate: number) => Promise<void> }) {
   const [progress, setProgress] = useState<number | null>(null);
   const [done, setDone] = useState(false);
-  const [format, setFormat] = useState('WAV');
   const [sampleRate, setSampleRate] = useState('48000');
 
-  useEffect(() => {
-    if (progress === null || done) return undefined;
-    const timer = window.setInterval(() => {
-      setProgress((value) => {
-        const next = Math.min(100, (value ?? 0) + Math.random() * 12 + 4);
-        if (next >= 100) {
-          window.clearInterval(timer);
-          setDone(true);
-        }
-        return next;
-      });
-    }, 110);
-    return () => window.clearInterval(timer);
-  }, [progress, done]);
-
   if (!open) return null;
-  const startRender = () => {
-    setProgress(0);
-    void onRender().then(() => {
+  const startRender = async () => {
+    setDone(false);
+    setProgress(5);
+    try {
+      await onRender(Number(sampleRate));
       setProgress(100);
       setDone(true);
-    });
+    } catch {
+      setProgress(null);
+    }
   };
   const close = () => {
     setProgress(null);
@@ -1156,7 +1432,7 @@ function ExportDialog({ open, onClose, onRender }: { open: boolean; onClose: () 
         <div style={{ padding: '16px 18px', borderBottom: `1px solid ${DS.bs}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: DS.ui, fontSize: 13, fontWeight: 500, color: DS.t1 }}>Export Mixdown</div>
-            <div style={{ fontFamily: DS.mono, fontSize: 10, color: DS.t4, marginTop: 2, letterSpacing: '0.04em' }}>Untitled Project</div>
+            <div style={{ fontFamily: DS.mono, fontSize: 10, color: DS.t4, marginTop: 2, letterSpacing: '0.04em' }}>{projectName}</div>
           </div>
           <button onClick={close} style={{ ...miniButton, height: 22, minWidth: 22 }}>x</button>
         </div>
@@ -1165,7 +1441,7 @@ function ExportDialog({ open, onClose, onRender }: { open: boolean; onClose: () 
             {done ? (
               <>
                 <div style={{ fontFamily: DS.ui, fontSize: 13, fontWeight: 500, color: DS.t1, marginBottom: 4 }}>Export complete</div>
-                <div style={{ fontFamily: DS.mono, fontSize: 10, color: DS.t4, letterSpacing: '0.03em' }}>Untitled_Project.{format.toLowerCase()} saved</div>
+                <div style={{ fontFamily: DS.mono, fontSize: 10, color: DS.t4, letterSpacing: '0.03em' }}>{safeProjectName(projectName)}.wav rendered</div>
                 <button onClick={close} style={{ marginTop: 22, padding: '7px 22px', borderRadius: 2, border: `1px solid ${DS.bi}`, background: 'transparent', color: DS.t2, cursor: 'pointer', fontFamily: DS.ui, fontSize: 12 }}>Done</button>
               </>
             ) : (
@@ -1180,7 +1456,7 @@ function ExportDialog({ open, onClose, onRender }: { open: boolean; onClose: () 
           </div>
         ) : (
           <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <SelectRow label="Format" value={format} values={['WAV', 'AIFF', 'FLAC', 'MP3']} onChange={setFormat} />
+            <DetailRow label="Format" value="WAV" />
             <SelectRow label="Sample Rate" value={sampleRate} values={['44100', '48000', '96000']} onChange={setSampleRate} />
             <DetailRow label="Normalize" value="enabled" />
             <DetailRow label="Render Source" value="Master" />
@@ -1243,7 +1519,7 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
   );
 }
 
-function StatusBar({ playing, recording, selectedClip, beats, trackCount, canUndo, canRedo }: { playing: boolean; recording: boolean; selectedClip: string | null; beats: number; trackCount: number; canUndo: boolean; canRedo: boolean }) {
+function StatusBar({ playing, recording, selectedClip, beats, trackCount, canUndo, canRedo, projectName, dirty, autoSavedAt }: { playing: boolean; recording: boolean; selectedClip: string | null; beats: number; trackCount: number; canUndo: boolean; canRedo: boolean; projectName: string; dirty: boolean; autoSavedAt: string | null }) {
   return (
     <div style={{ height: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: DS.s1, borderTop: `1px solid ${DS.bs}`, padding: '0 14px', flexShrink: 0, userSelect: 'none' }}>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
@@ -1251,6 +1527,7 @@ function StatusBar({ playing, recording, selectedClip, beats, trackCount, canUnd
         <span style={statusText}>256 smpl</span>
         <span style={statusText}>24-bit Float</span>
         <span style={statusText}>{trackCount} tracks</span>
+        <span style={statusText}>{projectName}{dirty ? ' *' : ''}</span>
         <span style={statusText}>Undo {canUndo ? 'ready' : 'empty'} / Redo {canRedo ? 'ready' : 'empty'}</span>
         {recording && <span style={{ ...statusText, color: DS.rec, animation: 'recpulse 1s ease-in-out infinite' }}>REC</span>}
         {playing && !recording && <span style={statusText}>PLAY</span>}
@@ -1259,6 +1536,7 @@ function StatusBar({ playing, recording, selectedClip, beats, trackCount, canUnd
       <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
         <span style={statusText}>Bar {Math.floor(beats / 4) + 1}</span>
         <span style={statusText}>Snap: 1/4</span>
+        {autoSavedAt && <span style={statusText}>Autosaved {new Date(autoSavedAt).toLocaleTimeString()}</span>}
         <span style={{ ...statusText, color: DS.t5 }}>AUDIAW v1.0</span>
       </div>
     </div>
@@ -1273,32 +1551,32 @@ const statusText: React.CSSProperties = {
 };
 
 function AppShell() {
+  const initialProject = useMemo(() => loadProjectFromStorage(), []);
   const [startup, setStartup] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [loop, setLoop] = useState(false);
-  const [beats, setBeats] = useState(0);
-  const [view, setView] = useState<ViewMode>('arrangement');
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
-  const [bottomOpen, setBottomOpen] = useState(false);
-  const [browserTab, setBrowserTab] = useState<BrowserTab>('samples');
-  const [tracks, setTracks] = useState<Track[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(PROJECT_KEY);
-      if (!raw) return INIT_TRACKS;
-      const project = JSON.parse(raw) as ProjectData;
-      return Array.isArray(project.tracks) ? project.tracks.map(normalizeTrack) : INIT_TRACKS;
-    } catch {
-      return INIT_TRACKS;
-    }
-  });
-  const [selectedId, setSelectedId] = useState('t1');
-  const [selectedClip, setSelectedClip] = useState<string | null>(null);
+  const [loop, setLoop] = useState(initialProject.playback.loop);
+  const [beats, setBeats] = useState(initialProject.playback.beat);
+  const [view, setView] = useState<ViewMode>(initialProject.workspace.view);
+  const [leftOpen, setLeftOpen] = useState(initialProject.workspace.leftOpen);
+  const [rightOpen, setRightOpen] = useState(initialProject.workspace.rightOpen);
+  const [bottomOpen, setBottomOpen] = useState(initialProject.workspace.bottomOpen);
+  const [browserTab, setBrowserTab] = useState<BrowserTab>(initialProject.workspace.browserTab);
+  const [tracks, setTracks] = useState<Track[]>(() => initialProject.tracks.map(normalizeTrack));
+  const [projectId, setProjectId] = useState(initialProject.id);
+  const [projectName, setProjectName] = useState(initialProject.name);
+  const [projectPath, setProjectPath] = useState<string | undefined>(initialProject.path);
+  const [projectCreatedAt, setProjectCreatedAt] = useState(initialProject.createdAt);
+  const [lastSavedAt, setLastSavedAt] = useState(initialProject.savedAt);
+  const [dirty, setDirty] = useState(false);
+  const [autoSavedAt, setAutoSavedAt] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>(loadRecentProjects);
+  const [selectedId, setSelectedId] = useState(initialProject.workspace.selectedTrackId);
+  const [selectedClip, setSelectedClip] = useState<string | null>(initialProject.workspace.selectedClipId);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [tool, setTool] = useState<ToolMode>('pointer');
-  const [zoom, setZoom] = useState(48);
+  const [tool, setTool] = useState<ToolMode>(initialProject.workspace.tool);
+  const [zoom, setZoom] = useState(initialProject.workspace.zoom);
   const [meters, setMeters] = useState<Record<string, number>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [context, setContext] = useState<ContextState | null>(null);
@@ -1311,9 +1589,30 @@ function AppShell() {
   const audioNodes = useRef<AudioScheduledSourceNode[]>([]);
   const audioStartBeat = useRef(0);
   const audioStartTime = useRef(0);
+  const recordingStartBeat = useRef(0);
+  const recordingTrackId = useRef<string | null>(null);
 
   playingRef.current = playing;
   const selectedTrack = tracks.find((track) => track.id === selectedId);
+  const selectedClipContext = useMemo(() => {
+    if (!selectedClip) return null;
+    for (const track of tracks) {
+      const clip = track.clips.find((item) => item.id === selectedClip);
+      if (clip) return { track, clip };
+    }
+    return null;
+  }, [selectedClip, tracks]);
+  const workspace = useMemo<WorkspaceState>(() => ({
+    view,
+    leftOpen,
+    rightOpen,
+    bottomOpen,
+    browserTab,
+    tool,
+    zoom,
+    selectedTrackId: selectedId,
+    selectedClipId: selectedClip,
+  }), [bottomOpen, browserTab, leftOpen, rightOpen, selectedClip, selectedId, tool, view, zoom]);
 
   const toast = useCallback((msg: string, type: ToastKind = 'info', kbd?: string) => {
     const id = Date.now();
@@ -1344,6 +1643,8 @@ function AppShell() {
   const stopTransport = useCallback(() => {
     stopAudio();
     setPlaying(false);
+    setRecording(false);
+    recordingTrackId.current = null;
     setBeats(0);
   }, [stopAudio]);
 
@@ -1356,45 +1657,280 @@ function AppShell() {
     void startAudio(beats).then(() => setPlaying(true)).catch(() => toast('Audio engine could not start', 'warn'));
   }, [beats, startAudio, stopAudio, toast]);
 
-  const saveProject = useCallback(() => {
-    const project: ProjectData = { version: 1, name: 'Untitled Project', bpm: BPM, tracks, savedAt: new Date().toISOString() };
-    window.localStorage.setItem(PROJECT_KEY, JSON.stringify(project));
-    toast('Project saved', 'success', 'Ctrl+S');
-  }, [toast, tracks]);
+  const snapshotProject = useCallback((path = projectPath, savedAt?: string) => buildProjectData({
+    id: projectId,
+    name: projectName,
+    tracks,
+    workspace,
+    loop,
+    beat: beats,
+    createdAt: projectCreatedAt,
+    savedAt,
+    path,
+  }), [beats, loop, projectCreatedAt, projectId, projectName, projectPath, tracks, workspace]);
 
-  const loadProject = useCallback(() => {
-    const raw = window.localStorage.getItem(PROJECT_KEY);
-    if (!raw) {
-      toast('No saved project found', 'warn');
-      return;
+  const rememberProject = useCallback((project: ProjectData) => {
+    const recent: RecentProject = {
+      id: project.id,
+      name: project.name,
+      path: project.path,
+      savedAt: project.savedAt,
+    };
+    setRecentProjects((items) => {
+      const next = [recent, ...items.filter((item) => item.id !== recent.id && item.path !== recent.path)].slice(0, 12);
+      window.localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const persistProjectDocument = useCallback(async (project: ProjectData, path?: string) => {
+    const contents = JSON.stringify({ ...project, path }, null, 2);
+    window.localStorage.setItem(PROJECT_KEY, contents);
+    if (path && isTauriRuntime()) {
+      await invoke('write_project_document', { path, contents });
     }
-    const project = JSON.parse(raw) as ProjectData;
-    setTracks(project.tracks.map(normalizeTrack));
+  }, []);
+
+  const applyProject = useCallback((project: ProjectData, sourcePath?: string) => {
+    const normalized = normalizeProjectData({ ...project, path: sourcePath ?? project.path });
+    stopTransport();
+    setProjectId(normalized.id);
+    setProjectName(normalized.name);
+    setProjectPath(normalized.path);
+    setProjectCreatedAt(normalized.createdAt);
+    setLastSavedAt(normalized.savedAt);
+    setTracks(normalized.tracks.map(normalizeTrack));
+    setView(normalized.workspace.view);
+    setLeftOpen(normalized.workspace.leftOpen);
+    setRightOpen(normalized.workspace.rightOpen);
+    setBottomOpen(normalized.workspace.bottomOpen);
+    setBrowserTab(normalized.workspace.browserTab);
+    setTool(normalized.workspace.tool);
+    setZoom(normalized.workspace.zoom);
+    setLoop(normalized.playback.loop);
+    setBeats(normalized.playback.beat);
     setUndoStack([]);
     setRedoStack([]);
-    setSelectedId(project.tracks[0]?.id ?? 't1');
-    setSelectedClip(null);
-    stopTransport();
-    toast('Project loaded', 'success');
-  }, [stopTransport, toast]);
+    setSelectedId(normalized.tracks.some((track) => track.id === normalized.workspace.selectedTrackId) ? normalized.workspace.selectedTrackId : normalized.tracks[0]?.id ?? 't1');
+    setSelectedClip(normalized.workspace.selectedClipId);
+    setDirty(false);
+    window.localStorage.setItem(PROJECT_KEY, JSON.stringify(normalized));
+    rememberProject(normalized);
+  }, [rememberProject, stopTransport]);
+
+  const saveProjectAs = useCallback(async () => {
+    const savedAt = new Date().toISOString();
+    const defaultPath = `${safeProjectName(projectName)}.audiaw`;
+    let path = projectPath;
+    if (isTauriRuntime()) {
+      const selected = await save({
+        defaultPath,
+        filters: [{ name: 'AUDIAW Project', extensions: ['audiaw'] }],
+      });
+      if (!selected) return;
+      path = selected;
+    }
+    const project = snapshotProject(path, savedAt);
+    try {
+      await persistProjectDocument(project, path);
+      if (!isTauriRuntime()) downloadTextFile(`${safeProjectName(project.name)}.audiaw`, JSON.stringify(project, null, 2));
+      setProjectPath(path);
+      setLastSavedAt(savedAt);
+      setDirty(false);
+      rememberProject(project);
+      toast('Project saved as .audiaw', 'success', 'Ctrl+Shift+S');
+    } catch {
+      toast('Save As failed', 'warn');
+    }
+  }, [persistProjectDocument, projectName, projectPath, rememberProject, snapshotProject, toast]);
+
+  const saveProject = useCallback(async () => {
+    if (!projectPath && isTauriRuntime()) {
+      await saveProjectAs();
+      return;
+    }
+    const savedAt = new Date().toISOString();
+    const project = snapshotProject(projectPath, savedAt);
+    try {
+      await persistProjectDocument(project, projectPath);
+      setLastSavedAt(savedAt);
+      setDirty(false);
+      rememberProject(project);
+      toast('Project saved', 'success', 'Ctrl+S');
+    } catch {
+      toast('Project save failed', 'warn');
+    }
+  }, [persistProjectDocument, projectPath, rememberProject, saveProjectAs, snapshotProject, toast]);
+
+  const importProjectFromFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        applyProject(normalizeProjectData(JSON.parse(String(reader.result))));
+        toast('Project opened', 'success');
+      } catch {
+        toast('Invalid AUDIAW project file', 'warn');
+      }
+    };
+    reader.readAsText(file);
+  }, [applyProject, toast]);
+
+  const loadProject = useCallback(async (path?: string) => {
+    if (isTauriRuntime()) {
+      try {
+        const selected = path ?? (await open({
+          multiple: false,
+          filters: [{ name: 'AUDIAW Project', extensions: ['audiaw', 'json'] }],
+        }));
+        if (!selected || Array.isArray(selected)) return;
+        const contents = await invoke<string>('read_project_document', { path: selected });
+        applyProject(normalizeProjectData(JSON.parse(contents)), selected);
+        toast('Project opened', 'success', 'Ctrl+O');
+      } catch {
+        toast('Open project failed', 'warn');
+      }
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.audiaw,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) importProjectFromFile(file);
+    };
+    input.click();
+  }, [applyProject, importProjectFromFile, toast]);
 
   const newProject = useCallback(() => {
+    const name = safeProjectName(window.prompt('Project name', 'Untitled Project') ?? 'Untitled Project');
     stopTransport();
+    setProjectId(makeId());
+    setProjectName(name);
+    setProjectPath(undefined);
+    setProjectCreatedAt(new Date().toISOString());
+    setLastSavedAt(new Date().toISOString());
     setTracks(patchInitialTracks());
     setUndoStack([]);
     setRedoStack([]);
     setSelectedId('t1');
     setSelectedClip(null);
+    setDirty(true);
     toast('New project created', 'success');
   }, [stopTransport, toast]);
+
+  const renameProject = useCallback(() => {
+    const name = safeProjectName(window.prompt('Project name', projectName) ?? projectName);
+    if (name === projectName) return;
+    setProjectName(name);
+    setDirty(true);
+    toast('Project renamed', 'success');
+  }, [projectName, toast]);
+
+  const duplicateProject = useCallback(async () => {
+    const nextName = safeProjectName(window.prompt('Duplicate project name', `${projectName} Copy`) ?? `${projectName} Copy`);
+    const nextId = makeId();
+    const now = new Date().toISOString();
+    let path: string | undefined;
+    if (isTauriRuntime()) {
+      const selected = await save({
+        defaultPath: `${safeProjectName(nextName)}.audiaw`,
+        filters: [{ name: 'AUDIAW Project', extensions: ['audiaw'] }],
+      });
+      if (!selected) return;
+      path = selected;
+    }
+    const project = buildProjectData({
+      id: nextId,
+      name: nextName,
+      tracks,
+      workspace,
+      loop,
+      beat: beats,
+      createdAt: now,
+      savedAt: now,
+      path,
+    });
+    try {
+      await persistProjectDocument(project, path);
+      if (!isTauriRuntime()) downloadTextFile(`${safeProjectName(project.name)}.audiaw`, JSON.stringify(project, null, 2));
+      setProjectId(nextId);
+      setProjectName(nextName);
+      setProjectPath(path);
+      setProjectCreatedAt(now);
+      setLastSavedAt(now);
+      setDirty(false);
+      rememberProject(project);
+      toast('Project duplicated', 'success');
+    } catch {
+      toast('Project duplicate failed', 'warn');
+    }
+  }, [beats, loop, persistProjectDocument, projectName, rememberProject, toast, tracks, workspace]);
 
   const commitTracks = useCallback((updater: (tracks: Track[]) => Track[], _label: string) => {
     setTracks((prev) => {
       setUndoStack((history) => [...history.slice(-99), prev]);
       setRedoStack([]);
+      setDirty(true);
       return updater(prev);
     });
   }, []);
+
+  const finalizeRecording = useCallback((endBeat: number) => {
+    const trackId = recordingTrackId.current;
+    const start = recordingStartBeat.current;
+    recordingTrackId.current = null;
+    setRecording(false);
+    if (!trackId) return;
+
+    const snappedStart = Math.max(0, Math.round(start * 4) / 4);
+    const length = Math.max(1, Math.round(Math.max(endBeat - snappedStart, 1) * 4) / 4);
+    const clipId = `rec${Date.now()}`;
+
+    commitTracks((items) => items.map((track) => {
+      if (track.id !== trackId) return track;
+      const isMidi = track.type === 'midi';
+      return {
+        ...track,
+        armed: false,
+        clips: [
+          ...track.clips,
+          makeClip(
+            clipId,
+            snappedStart,
+            length,
+            isMidi ? 'midi' : 'audio',
+            isMidi ? undefined : track.sample,
+            isMidi ? defaultNotes(track.name) : undefined,
+          ),
+        ],
+      };
+    }), 'Record take');
+    setSelectedClip(clipId);
+    toast('Recorded take committed', 'success');
+  }, [commitTracks, toast]);
+
+  const toggleRecording = useCallback(() => {
+    if (recording) {
+      finalizeRecording(beats);
+      return;
+    }
+
+    const target = tracks.find((track) => track.armed && track.type !== 'master' && track.type !== 'return')
+      ?? selectedTrack;
+    if (!target || target.type === 'master' || target.type === 'return') {
+      toast('Select or arm an audio/MIDI track first', 'warn', 'R');
+      return;
+    }
+
+    recordingStartBeat.current = Math.max(0, Math.round(beats * 4) / 4);
+    recordingTrackId.current = target.id;
+    commitTracks((items) => items.map((track) => track.id === target.id ? { ...track, armed: true } : track), 'Arm recording track');
+    setRecording(true);
+    if (!playingRef.current) {
+      void startAudio(beats).then(() => setPlaying(true)).catch(() => toast('Audio engine could not start', 'warn'));
+    }
+    toast(`Recording ${target.name}`, 'success', 'R');
+  }, [beats, commitTracks, finalizeRecording, recording, selectedTrack, startAudio, toast, tracks]);
 
   const undo = useCallback(() => {
     setUndoStack((history) => {
@@ -1453,8 +1989,12 @@ function AppShell() {
       return undefined;
     }
     const timer = window.setInterval(() => {
+      const time = audioCtx.current?.currentTime ?? performance.now() / 1000;
       setMeters(tracks.reduce<Record<string, number>>((acc, track) => {
-        if (!track.muted) acc[track.id] = track.volume - 3 + (Math.random() - 0.5) * 12;
+        if (!track.muted) {
+          const phase = (hashStr(track.id) % 31) / 10;
+          acc[track.id] = track.volume - 8 + Math.sin(time * 8 + phase) * 5 + Math.sin(time * 17 + phase) * 2;
+        }
         return acc;
       }, {}));
     }, 80);
@@ -1465,6 +2005,17 @@ function AppShell() {
     if (!playing) return;
     void startAudio(beats).catch(() => toast('Audio graph restart failed', 'warn'));
   }, [tracks]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const autoSaved = new Date().toISOString();
+      const project = snapshotProject(projectPath, autoSaved);
+      window.localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project));
+      window.localStorage.setItem(PROJECT_KEY, JSON.stringify(project));
+      setAutoSavedAt(autoSaved);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [beats, browserTab, bottomOpen, leftOpen, loop, projectName, projectPath, rightOpen, selectedClip, selectedId, snapshotProject, tool, tracks, view, zoom]);
 
   const updateTrack = useCallback((id: string, patch: Partial<Track>) => {
     commitTracks((items) => items.map((track) => track.id === id ? { ...track, ...patch } : track), 'Update track');
@@ -1487,6 +2038,15 @@ function AppShell() {
     toast('Track duplicated', 'success');
   }, [commitTracks, toast, tracks]);
 
+  const renameTrack = useCallback((id: string) => {
+    const current = tracks.find((track) => track.id === id);
+    if (!current) return;
+    const name = window.prompt('Track name', current.name)?.trim();
+    if (!name || name === current.name) return;
+    commitTracks((items) => items.map((track) => track.id === id ? { ...track, name } : track), 'Rename track');
+    toast('Track renamed', 'success');
+  }, [commitTracks, toast, tracks]);
+
   const deleteTrack = useCallback((id: string) => {
     const target = tracks.find((track) => track.id === id);
     if (!target || target.type === 'master') return;
@@ -1499,9 +2059,48 @@ function AppShell() {
     commitTracks((items) => items.map((track) => track.id === trackId ? { ...track, clips: track.clips.map((clip) => clip.id === clipId ? { ...clip, s: start } : clip) } : track), 'Move clip');
   }, [commitTracks]);
 
+  const resizeClip = useCallback((trackId: string, clipId: string, start: number, length: number) => {
+    commitTracks((items) => items.map((track) => track.id === trackId ? {
+      ...track,
+      clips: track.clips.map((clip) => clip.id === clipId ? { ...clip, s: Math.max(0, start), l: Math.max(1, length) } : clip),
+    } : track), 'Resize clip');
+  }, [commitTracks]);
+
   const createClip = useCallback((trackId: string, start: number) => {
-    commitTracks((items) => items.map((track) => track.id === trackId ? { ...track, clips: [...track.clips, makeClip(`c${Date.now()}`, start, 4, track.type === 'midi' ? 'midi' : 'audio', track.sample, track.type === 'midi' ? defaultNotes(track.name) : undefined)] } : track), 'Create clip');
+    const clipId = `c${Date.now()}`;
+    commitTracks((items) => items.map((track) => track.id === trackId ? { ...track, clips: [...track.clips, makeClip(clipId, start, 4, track.type === 'midi' ? 'midi' : 'audio', track.sample, track.type === 'midi' ? defaultNotes(track.name) : undefined)] } : track), 'Create clip');
+    setSelectedId(trackId);
+    setSelectedClip(clipId);
     toast('Clip created', 'success');
+  }, [commitTracks, toast]);
+
+  const splitClip = useCallback((trackId: string, clipId: string, splitAt: number) => {
+    const rightId = `c${Date.now()}`;
+    let didSplit = false;
+    commitTracks((items) => items.map((track) => {
+      if (track.id !== trackId) return track;
+      const clip = track.clips.find((item) => item.id === clipId);
+      if (!clip) return track;
+      const beat = Math.round(splitAt * 4) / 4;
+      if (beat <= clip.s + 0.25 || beat >= clip.s + clip.l - 0.25) return track;
+      didSplit = true;
+      return {
+        ...track,
+        clips: track.clips.flatMap((item) => {
+          if (item.id !== clipId) return [item];
+          return [
+            { ...item, l: beat - item.s },
+            { ...item, id: rightId, s: beat, l: item.s + item.l - beat, name: item.name ? `${item.name} B` : undefined },
+          ];
+        }),
+      };
+    }), 'Split clip');
+    if (didSplit) {
+      setSelectedClip(rightId);
+      toast('Clip split', 'success', 'C');
+    } else {
+      toast('Move playhead inside the clip to split', 'warn');
+    }
   }, [commitTracks, toast]);
 
   const deleteClip = useCallback((trackId: string, clipId: string) => {
@@ -1510,29 +2109,91 @@ function AppShell() {
     toast('Clip deleted', 'warn');
   }, [commitTracks, toast]);
 
+  const deleteSelectedClip = useCallback(() => {
+    if (!selectedClipContext) return false;
+    deleteClip(selectedClipContext.track.id, selectedClipContext.clip.id);
+    return true;
+  }, [deleteClip, selectedClipContext]);
+
   const duplicateClip = useCallback((trackId: string, clipId: string) => {
+    const newId = `c${Date.now()}`;
     commitTracks((items) => items.map((track) => {
       if (track.id !== trackId) return track;
       const clip = track.clips.find((item) => item.id === clipId);
-      return clip ? { ...track, clips: [...track.clips, { ...clip, id: `${clip.id}x${Date.now()}`, s: clip.s + clip.l }] } : track;
+      return clip ? { ...track, clips: [...track.clips, { ...clip, id: newId, s: clip.s + clip.l }] } : track;
     }), 'Duplicate clip');
+    setSelectedClip(newId);
     toast('Clip duplicated', 'success');
   }, [commitTracks, toast]);
 
+  const duplicateSelectedClip = useCallback(() => {
+    if (!selectedClipContext) return false;
+    duplicateClip(selectedClipContext.track.id, selectedClipContext.clip.id);
+    return true;
+  }, [duplicateClip, selectedClipContext]);
+
+  const splitSelectedClip = useCallback(() => {
+    if (!selectedClipContext) return false;
+    splitClip(selectedClipContext.track.id, selectedClipContext.clip.id, beats);
+    return true;
+  }, [beats, selectedClipContext, splitClip]);
+
+  const renameClip = useCallback((trackId: string, clipId: string) => {
+    const track = tracks.find((item) => item.id === trackId);
+    const clip = track?.clips.find((item) => item.id === clipId);
+    if (!clip) return;
+    const name = window.prompt('Clip name', clip.name ?? clip.sample ?? track?.name ?? clip.id)?.trim();
+    if (!name) return;
+    commitTracks((items) => items.map((item) => item.id === trackId ? {
+      ...item,
+      clips: item.clips.map((candidate) => candidate.id === clipId ? { ...candidate, name } : candidate),
+    } : item), 'Rename clip');
+    toast('Clip renamed', 'success');
+  }, [commitTracks, toast, tracks]);
+
   const loadSampleToSelectedTrack = useCallback((sample: string) => {
+    const clipId = `c${Date.now()}`;
+    let createdClip = false;
     commitTracks((items) => items.map((track) => {
       if (track.id !== selectedId) return track;
+      const existingClipSelected = selectedClip && track.clips.some((clip) => clip.id === selectedClip);
+      if (existingClipSelected) {
+        return {
+          ...track,
+          sample,
+          clips: track.clips.map((clip) => clip.id === selectedClip ? { ...clip, sample, name: sample } : clip),
+        };
+      }
       const isMidi = track.type === 'midi';
-      const clip = makeClip(`c${Date.now()}`, Math.max(0, Math.floor(beats)), 4, isMidi ? 'midi' : 'audio', sample, isMidi ? defaultNotes(track.name) : undefined);
+      const clip = makeClip(clipId, Math.max(0, Math.floor(beats)), 4, isMidi ? 'midi' : 'audio', sample, isMidi ? defaultNotes(track.name) : undefined);
+      createdClip = true;
       return {
         ...track,
         sample,
         instrument: isMidi ? 'sampler' : track.instrument,
-        clips: track.clips.length ? track.clips : [clip],
+        clips: [...track.clips, clip],
       };
     }), 'Load sample');
+    if (createdClip) setSelectedClip(clipId);
     toast(`${sample} assigned`, 'success');
-  }, [beats, commitTracks, selectedId, toast]);
+  }, [beats, commitTracks, selectedClip, selectedId, toast]);
+
+  const dropSampleOnTrack = useCallback((trackId: string, sample: string, start: number) => {
+    const clipId = `c${Date.now()}`;
+    commitTracks((items) => items.map((track) => {
+      if (track.id !== trackId || track.type === 'master' || track.type === 'return') return track;
+      const isMidi = track.type === 'midi';
+      return {
+        ...track,
+        sample,
+        instrument: isMidi ? 'sampler' : track.instrument,
+        clips: [...track.clips, makeClip(clipId, Math.max(0, start), 4, isMidi ? 'midi' : 'audio', sample, isMidi ? defaultNotes(track.name) : undefined)],
+      };
+    }), 'Drop sample');
+    setSelectedId(trackId);
+    setSelectedClip(clipId);
+    toast(`${sample} dropped`, 'success');
+  }, [commitTracks, toast]);
 
   const insertPluginOnSelectedTrack = useCallback((plugin: string) => {
     commitTracks((items) => items.map((track) => track.id === selectedId ? { ...track, effects: Array.from(new Set([...track.effects, plugin])) } : track), 'Insert plugin');
@@ -1564,21 +2225,31 @@ function AppShell() {
     commitTracks((items) => items.map((track) => track.id === selectedTrack.id ? { ...track, clips: track.clips.map((clip) => clip.id === clipId ? { ...clip, notes: (clip.notes ?? []).filter((note) => note.id !== noteId) } : clip) } : track), 'Delete note');
   }, [commitTracks, selectedTrack]);
 
-  const renderProject = useCallback(async () => {
-    const sampleRate = 48000;
+  const renderProject = useCallback(async (sampleRate = 48000) => {
     const offline = new OfflineAudioContext(2, Math.ceil(sampleRate * beatToSeconds(ARRANGEMENT_BEATS)), sampleRate);
     const nodes: AudioScheduledSourceNode[] = [];
     scheduleProject(offline, offline.destination, tracks, 0, nodes);
     const buffer = await offline.startRendering();
     const blob = encodeWav(buffer);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'AUDIAW_Untitled_Project.wav';
-    link.click();
-    URL.revokeObjectURL(url);
+    const filename = `${safeProjectName(projectName)}.wav`;
+
+    if (isTauriRuntime()) {
+      const outputPath = await save({
+        defaultPath: filename,
+        filters: [{ name: 'WAV Audio', extensions: ['wav'] }],
+      });
+      if (!outputPath) {
+        toast('Export cancelled', 'info');
+        return;
+      }
+      await invoke('write_binary_file', { path: outputPath, bytes: await blobToBytes(blob) });
+      toast('Rendered WAV export', 'success');
+      return;
+    }
+
+    downloadBlob(filename, blob);
     toast('Rendered WAV export', 'success');
-  }, [toast, tracks]);
+  }, [projectName, toast, tracks]);
 
   const writeAutomationPoint = useCallback((trackId: string) => {
     commitTracks((items) => items.map((track) => track.id === trackId ? {
@@ -1593,7 +2264,7 @@ function AppShell() {
 
   const openTrackCtx = useCallback((trackId: string, x: number, y: number) => {
     setContext({ x, y, items: [
-      { label: 'Rename Track', fn: () => toast('Rename ready') },
+      { label: 'Rename Track', fn: () => renameTrack(trackId) },
       { label: 'Duplicate Track', fn: () => duplicateTrack(trackId) },
       '---',
       { label: 'Arm for Recording', kbd: 'R', fn: () => updateTrack(trackId, { armed: !tracks.find((track) => track.id === trackId)?.armed }) },
@@ -1602,25 +2273,25 @@ function AppShell() {
       '---',
       { label: 'Delete Track', danger: true, fn: () => deleteTrack(trackId) },
     ] });
-  }, [deleteTrack, duplicateTrack, toast, tracks, updateTrack]);
+  }, [deleteTrack, duplicateTrack, renameTrack, tracks, updateTrack]);
 
   const openClipCtx = useCallback((trackId: string, clipId: string, x: number, y: number) => {
     setContext({ x, y, items: [
-      { label: 'Rename Clip', fn: () => toast('Rename clip') },
+      { label: 'Rename Clip', fn: () => renameClip(trackId, clipId) },
       { label: 'Duplicate Clip', fn: () => duplicateClip(trackId, clipId) },
-      { label: 'Split at Playhead', kbd: 'C', fn: () => toast('Clip split', 'success') },
+      { label: 'Split at Playhead', kbd: 'C', fn: () => splitClip(trackId, clipId, beats) },
       '---',
-      { label: 'Consolidate', fn: () => toast('Consolidating...') },
-      { label: 'Flatten to Audio', fn: () => toast('Rendering to audio...') },
+      { label: 'Replace from Browser', fn: () => setBrowserTab('samples') },
+      { label: 'Open Piano Roll', fn: () => setView('piano-roll') },
       '---',
       { label: 'Delete Clip', danger: true, fn: () => deleteClip(trackId, clipId) },
     ] });
-  }, [deleteClip, duplicateClip, toast]);
+  }, [beats, deleteClip, duplicateClip, renameClip, splitClip]);
 
   const execCommand = useCallback((id: string) => {
     if (id === 'play') togglePlayback();
     if (id === 'stop') stopTransport();
-    if (id === 'record') setRecording((value) => !value);
+    if (id === 'record') toggleRecording();
     if (id === 'loop') setLoop((value) => !value);
     if (id === 'arr') setView('arrangement');
     if (id === 'mix') setView('mixer');
@@ -1629,16 +2300,22 @@ function AppShell() {
     if (id === 'right') setRightOpen((value) => !value);
     if (id === 'bottom') setBottomOpen((value) => !value);
     if (id === 'export') setExportOpen(true);
-    if (id === 'save') saveProject();
-    if (id === 'load') loadProject();
+    if (id === 'save') void saveProject();
+    if (id === 'saveas') void saveProjectAs();
+    if (id === 'load') void loadProject();
     if (id === 'new') newProject();
+    if (id === 'renameproj') renameProject();
+    if (id === 'dupeproj') void duplicateProject();
     if (id === 'undo') undo();
     if (id === 'redo') redo();
+    if (id === 'dupeclip') duplicateSelectedClip();
+    if (id === 'splitclip') splitSelectedClip();
+    if (id === 'delclip') deleteSelectedClip();
     if (id === 'zin') setZoom((value) => Math.min(value + 16, 128));
     if (id === 'zout') setZoom((value) => Math.max(value - 16, 16));
     if (id === 'addau') addTrack('audio');
     if (id === 'addmi') addTrack('midi');
-  }, [addTrack, loadProject, newProject, redo, saveProject, stopTransport, togglePlayback, undo]);
+  }, [addTrack, deleteSelectedClip, duplicateProject, duplicateSelectedClip, loadProject, newProject, redo, renameProject, saveProject, saveProjectAs, splitSelectedClip, stopTransport, togglePlayback, toggleRecording, undo]);
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -1647,29 +2324,37 @@ function AppShell() {
       if (mod && event.key.toLowerCase() === 'k') { event.preventDefault(); setCmdOpen(true); return; }
       if (mod && event.key.toLowerCase() === 'e') { event.preventDefault(); setExportOpen(true); return; }
       if (mod && event.key.toLowerCase() === 'n') { event.preventDefault(); newProject(); return; }
-      if (mod && event.key.toLowerCase() === 'o') { event.preventDefault(); loadProject(); return; }
+      if (mod && event.key.toLowerCase() === 'o') { event.preventDefault(); void loadProject(); return; }
       if (mod && event.key.toLowerCase() === 'b') { event.preventDefault(); setLeftOpen((value) => !value); return; }
       if (mod && event.key.toLowerCase() === 'i') { event.preventDefault(); setRightOpen((value) => !value); return; }
       if (mod && event.key.toLowerCase() === 'j') { event.preventDefault(); setBottomOpen((value) => !value); return; }
       if (mod && event.key === '1') { event.preventDefault(); setView('arrangement'); return; }
       if (mod && event.key === '2') { event.preventDefault(); setView('mixer'); return; }
       if (mod && event.key === '3') { event.preventDefault(); setView('piano-roll'); return; }
-      if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(); return; }
+      if (mod && event.shiftKey && event.key.toLowerCase() === 's') { event.preventDefault(); void saveProjectAs(); return; }
+      if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); void saveProject(); return; }
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'r') { event.preventDefault(); renameProject(); return; }
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); void duplicateProject(); return; }
       if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(); return; }
       if (mod && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); return; }
+      if (mod && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!duplicateSelectedClip()) toast('Select a clip to duplicate', 'warn'); return; }
       if (mod && (event.key === '=' || event.key === '+')) { event.preventDefault(); setZoom((value) => Math.min(value + 16, 128)); return; }
       if (mod && event.key === '-') { event.preventDefault(); setZoom((value) => Math.max(value - 16, 16)); return; }
+      if (event.key === 'Delete' || event.key === 'Backspace') { if (deleteSelectedClip()) event.preventDefault(); return; }
       if (event.key === ' ') { event.preventDefault(); togglePlayback(); return; }
       if (event.key === 'Escape') { event.preventDefault(); setCmdOpen(false); setExportOpen(false); setContext(null); stopTransport(); return; }
       if (event.key.toLowerCase() === 'l') setLoop((value) => !value);
-      if (event.key.toLowerCase() === 'r') setRecording((value) => !value);
+      if (event.key.toLowerCase() === 'r') toggleRecording();
       if (event.key.toLowerCase() === 'v') setTool('pointer');
       if (event.key.toLowerCase() === 'b') setTool('pencil');
-      if (event.key.toLowerCase() === 'c') setTool('scissors');
+      if (event.key.toLowerCase() === 'c') {
+        if (view === 'arrangement' && splitSelectedClip()) return;
+        setTool('scissors');
+      }
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [loadProject, newProject, redo, saveProject, stopTransport, togglePlayback, undo]);
+  }, [deleteSelectedClip, duplicateProject, duplicateSelectedClip, loadProject, newProject, redo, renameProject, saveProject, saveProjectAs, splitSelectedClip, stopTransport, toast, togglePlayback, toggleRecording, undo, view]);
 
   return (
     <>
@@ -1691,13 +2376,13 @@ function AppShell() {
       `}</style>
       {startup && <StartupScreen onDone={() => setStartup(false)} />}
       <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: DS.s0, overflow: 'hidden', color: DS.t1, fontFamily: DS.ui }}>
-        <TransportBar playing={playing} recording={recording} loop={loop} bpm={BPM} beats={beats} view={view} leftOpen={leftOpen} rightOpen={rightOpen} bottomOpen={bottomOpen} onPlay={togglePlayback} onStop={stopTransport} onRec={() => setRecording((value) => !value)} onLoop={() => setLoop((value) => !value)} onView={setView} onLeft={() => setLeftOpen((value) => !value)} onRight={() => setRightOpen((value) => !value)} onBottom={() => setBottomOpen((value) => !value)} onCmd={() => setCmdOpen(true)} onExport={() => setExportOpen(true)} />
+        <TransportBar playing={playing} recording={recording} loop={loop} bpm={BPM} beats={beats} view={view} leftOpen={leftOpen} rightOpen={rightOpen} bottomOpen={bottomOpen} onPlay={togglePlayback} onStop={stopTransport} onRec={toggleRecording} onLoop={() => setLoop((value) => !value)} onView={setView} onLeft={() => setLeftOpen((value) => !value)} onRight={() => setRightOpen((value) => !value)} onBottom={() => setBottomOpen((value) => !value)} onCmd={() => setCmdOpen(true)} onExport={() => setExportOpen(true)} />
         <ToolStrip tool={tool} onTool={setTool} zoom={zoom} onZoom={(delta) => setZoom((value) => Math.max(16, Math.min(128, value + delta * 16)))} />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          <BrowserPanel open={leftOpen} tab={browserTab} onTab={setBrowserTab} onUse={(msg) => toast(msg, 'success')} onSample={loadSampleToSelectedTrack} onPlugin={insertPluginOnSelectedTrack} />
+          <BrowserPanel open={leftOpen} tab={browserTab} onTab={setBrowserTab} onUse={(msg) => toast(msg, 'success')} onSample={loadSampleToSelectedTrack} onPlugin={insertPluginOnSelectedTrack} recentProjects={recentProjects} onOpenProject={(path) => { void loadProject(path); }} />
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-              {view === 'arrangement' && <ArrangementView tracks={tracks} selId={selectedId} selClip={selectedClip} zoom={zoom} beats={beats} loop={loop} onSelectTrack={setSelectedId} onSelectClip={setSelectedClip} onMoveClip={moveClip} onCreateClip={createClip} onMute={(id) => updateTrack(id, { muted: !tracks.find((track) => track.id === id)?.muted })} onSolo={(id) => updateTrack(id, { solo: !tracks.find((track) => track.id === id)?.solo })} onArm={(id) => updateTrack(id, { armed: !tracks.find((track) => track.id === id)?.armed })} onTrackCtx={openTrackCtx} onClipCtx={openClipCtx} />}
+              {view === 'arrangement' && <ArrangementView tracks={tracks} selId={selectedId} selClip={selectedClip} tool={tool} zoom={zoom} beats={beats} loop={loop} onSelectTrack={setSelectedId} onSelectClip={setSelectedClip} onMoveClip={moveClip} onResizeClip={resizeClip} onCreateClip={createClip} onDropSample={dropSampleOnTrack} onMute={(id) => updateTrack(id, { muted: !tracks.find((track) => track.id === id)?.muted })} onSolo={(id) => updateTrack(id, { solo: !tracks.find((track) => track.id === id)?.solo })} onArm={(id) => updateTrack(id, { armed: !tracks.find((track) => track.id === id)?.armed })} onTrackCtx={openTrackCtx} onClipCtx={openClipCtx} />}
               {view === 'mixer' && <MixerView tracks={tracks} selectedId={selectedId} meters={meters} playing={playing} onSelect={setSelectedId} onVolume={(id, volume) => updateTrack(id, { volume })} onPan={(id, pan) => updateTrack(id, { pan })} />}
               {view === 'piano-roll' && <PianoRollView track={selectedTrack} selectedClip={selectedClip} onSelectClip={setSelectedClip} onAddNote={addNoteToSelectedClip} onUpdateNote={updateNote} onDeleteNote={deleteNote} />}
             </div>
@@ -1705,10 +2390,10 @@ function AppShell() {
           </div>
           <InspectorPanel open={rightOpen} track={selectedTrack} beats={beats} onVolume={(id, volume) => updateTrack(id, { volume })} onPan={(id, pan) => updateTrack(id, { pan })} onSend={(id, sendA) => updateTrack(id, { sendA })} onAutomationPoint={writeAutomationPoint} />
         </div>
-        <StatusBar playing={playing} recording={recording} selectedClip={selectedClip} beats={beats} trackCount={tracks.length} canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} />
+        <StatusBar playing={playing} recording={recording} selectedClip={selectedClip} beats={beats} trackCount={tracks.length} canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} projectName={projectName} dirty={dirty} autoSavedAt={autoSavedAt} />
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} onExec={execCommand} />
-      <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} onRender={renderProject} />
+      <ExportDialog open={exportOpen} projectName={projectName} onClose={() => setExportOpen(false)} onRender={renderProject} />
       <ContextMenu state={context} onClose={() => setContext(null)} />
       <Toasts toasts={toasts} />
     </>

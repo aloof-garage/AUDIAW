@@ -44,7 +44,11 @@
 
 ### For End Users (Pre-built Binaries)
 
-**Coming Soon**: Pre-built binaries will be available on the [releases page](https://github.com/audiaw/audiaw/releases).
+Pre-built binaries are available on the [AUDIAW releases page](https://github.com/aloof-garage/AUDIAW/releases/latest).
+
+- Windows: `AUDIAW-windows-x64-setup.exe`
+- macOS: `AUDIAW-macos.dmg`
+- Linux: `AUDIAW-linux-x86_64.AppImage`
 
 1. Download the installer for your platform
 2. Run the installer
@@ -57,8 +61,8 @@
 # Prerequisites: Rust 1.75+, Node.js 20+, pnpm 8+
 
 # Clone repository
-git clone https://github.com/audiaw/audiaw.git
-cd audiaw
+git clone https://github.com/aloof-garage/AUDIAW.git
+cd AUDIAW
 
 # Install dependencies
 pnpm install

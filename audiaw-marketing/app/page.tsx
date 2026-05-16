@@ -23,6 +23,7 @@ import {
 
 const repoUrl = "https://github.com/aloof-garage/AUDIAW";
 const releasesUrl = `${repoUrl}/releases/latest`;
+const releaseAssetUrl = `${releasesUrl}/download`;
 
 const navItems = [
   ["Product", "#product"],
@@ -34,21 +35,21 @@ const navItems = [
 const downloadOptions = [
   {
     platform: "Windows",
-    detail: "x64 installer from GitHub Releases",
+    detail: "x64 setup installer",
     icon: MonitorDown,
-    href: releasesUrl,
+    href: `${releaseAssetUrl}/AUDIAW-windows-x64-setup.exe`,
   },
   {
     platform: "macOS",
-    detail: "Universal build from GitHub Releases",
+    detail: "DMG desktop app",
     icon: Laptop,
-    href: releasesUrl,
+    href: `${releaseAssetUrl}/AUDIAW-macos.dmg`,
   },
   {
     platform: "Linux",
-    detail: "AppImage / package from GitHub Releases",
+    detail: "x86_64 AppImage",
     icon: Terminal,
-    href: releasesUrl,
+    href: `${releaseAssetUrl}/AUDIAW-linux-x86_64.AppImage`,
   },
 ];
 
@@ -286,7 +287,7 @@ export default function Home() {
           </div>
           <Reveal delay={0.15}>
             <div className="mt-8 border border-white/10 bg-white/[0.025] p-5 text-center text-sm leading-7 text-secondary">
-              Release asset names can evolve as the project matures. Each platform button opens the latest GitHub Release so users always reach the current official binaries.
+              Each platform button downloads the matching asset from the latest GitHub Release.
             </div>
           </Reveal>
         </div>
