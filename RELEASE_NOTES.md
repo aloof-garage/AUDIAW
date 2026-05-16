@@ -4,10 +4,12 @@ AUDIAW v1.0.0 is the first production desktop release.
 
 ## Highlights
 
-- File-backed `.audiaw` project documents with autosave, recovery, recents, metadata, assets, timeline, mixer, automation, and workspace state.
-- Arrangement, mixer, piano roll, routing/send controls, clip editing, drag/drop, undo/redo, shortcuts, and realtime transport feedback.
-- Offline WAV mixdown export from the master bus.
-- Cross-platform Tauri desktop packaging for Windows, macOS, and Linux.
+- Windows, macOS, and Linux desktop packaging through Tauri.
+- File-backed `.audiaw` project save/load workflow.
+- Autosave recovery and recent projects.
+- Arrangement, mixer, piano roll, inspector, browser, automation, and transport workflows.
+- Offline WAV mixdown export.
+- GitHub Releases workflow with stable downloadable asset names.
 
 ## Downloads
 
@@ -18,4 +20,4 @@ AUDIAW v1.0.0 is the first production desktop release.
 
 ## Notes
 
-Projects are stored as portable `.audiaw` JSON documents and can also be recovered from the local autosave slot if the app is closed before a manual save.
+Projects are portable `.audiaw` JSON documents. If the app closes before a manual save, the local autosave slot can restore the latest working state.
