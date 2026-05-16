@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="g" cx="72%" cy="20%" r="58%">
+      <stop offset="0" stop-color="#3B8BF5" stop-opacity=".35"/>
+      <stop offset=".48" stop-color="#101116" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#070708"/>
+    </radialGradient>
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M34 0H0v34" fill="none" stroke="white" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#g)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <text x="72" y="170" fill="white" fill-opacity=".62" font-family="Consolas, monospace" font-size="24" letter-spacing="10">AUDIAW</text>
+  <text x="72" y="310" fill="white" font-family="Inter, Arial, sans-serif" font-size="112" font-weight="500">Sound,</text>
+  <text x="72" y="422" fill="white" font-family="Inter, Arial, sans-serif" font-size="112" font-weight="500">engineered.</text>
+  <text x="76" y="500" fill="white" fill-opacity=".62" font-family="Inter, Arial, sans-serif" font-size="30">Free open-source next-generation DAW</text>
+  <g transform="translate(720 124)">
+    <rect width="390" height="310" fill="#09090b" stroke="white" stroke-opacity=".16"/>
+    <rect width="390" height="38" fill="white" fill-opacity=".04"/>
+    <g transform="translate(0 38)">
+      <rect width="92" height="272" fill="white" fill-opacity=".035"/>
+      <g stroke="white" stroke-opacity=".08">
+        <path d="M0 45h390M0 90h390M0 135h390M0 180h390M0 225h390"/>
+        <path d="M140 0v272M190 0v272M240 0v272M290 0v272M340 0v272"/>
+      </g>
+      <g>
+        <rect x="116" y="11" width="82" height="24" fill="#3B8BF5" fill-opacity=".28" stroke="#3B8BF5" stroke-opacity=".65"/>
+        <rect x="225" y="56" width="92" height="24" fill="#8B5CF6" fill-opacity=".28" stroke="#8B5CF6" stroke-opacity=".65"/>
+        <rect x="130" y="101" width="188" height="24" fill="#22C55E" fill-opacity=".24" stroke="#22C55E" stroke-opacity=".6"/>
+        <rect x="185" y="146" width="108" height="24" fill="#F59E0B" fill-opacity=".26" stroke="#F59E0B" stroke-opacity=".62"/>
+        <rect x="245" y="191" width="96" height="24" fill="#EC4899" fill-opacity=".25" stroke="#EC4899" stroke-opacity=".62"/>
+      </g>
+    </g>
+  </g>
+</svg>

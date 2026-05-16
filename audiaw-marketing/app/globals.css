@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --surface-void: hsl(240, 10%, 6%);
+  --surface-1: hsl(240, 9%, 8%);
+  --surface-2: hsl(240, 10%, 11%);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --accent: #3b8bf5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #070708;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(59, 139, 245, 0.35);
+  color: white;
+}
+
+.noise {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  opacity: 0.035;
+  mix-blend-mode: screen;
+  background-image:
+    linear-gradient(0deg, transparent 0 50%, rgba(255,255,255,0.5) 50% 100%),
+    radial-gradient(circle at 20% 20%, rgba(255,255,255,0.35), transparent 22%),
+    radial-gradient(circle at 80% 10%, rgba(255,255,255,0.22), transparent 18%);
+  background-size: 100% 2px, 180px 180px, 220px 220px;
+}
+
+.hero-radiance {
+  background:
+    radial-gradient(circle at 78% 28%, rgba(59, 139, 245, 0.28), transparent 28%),
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.085), transparent 22%),
+    linear-gradient(180deg, rgba(255,255,255,0.065), transparent 38%),
+    #070708;
+}
+
+.hairline {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.section-shell {
+  width: min(1180px, calc(100vw - 32px));
+  margin-inline: auto;
+}
+
+.mono-label {
+  font-family: var(--font-geist-mono), Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.42);
+}
+
+.signal-line {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+}
+
+.mask-fade {
+  mask-image: linear-gradient(90deg, transparent, black 12%, black 88%, transparent);
+}
+
+.download-focus:focus-visible,
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid rgba(59,139,245,0.95);
+  outline-offset: 4px;
+}
+
+.clip {
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0.16) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.02));
+  background-size: 18px 100%, 100% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
