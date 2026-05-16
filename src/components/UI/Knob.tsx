@@ -78,7 +78,7 @@ export const Knob: React.FC<KnobProps> = ({
     };
   }, [isDragging, min, max, handleChange]);
 
-  // Calculate rotation angle (-135° to 135°)
+  // Calculate rotation angle (-135Â° to 135Â°)
   const normalizedValue = (value - min) / (max - min);
   const angle = -135 + normalizedValue * 270;
 
@@ -161,5 +161,3 @@ export const Knob: React.FC<KnobProps> = ({
     </div>
   );
 };
-
-// Made with Bob

@@ -52,5 +52,3 @@ export const TrackLane: React.FC<TrackLaneProps> = React.memo(({
 });
 
 TrackLane.displayName = 'TrackLane';
-
-// Made with Bob

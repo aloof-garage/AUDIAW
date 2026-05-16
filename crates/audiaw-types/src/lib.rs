@@ -235,7 +235,7 @@ impl Default for ProjectMetadata {
             author: "AUDIAW User".to_string(),
             created_at: now.clone(),
             modified_at: now,
-            version: "0.1.0".to_string(),
+            version: "1.0.0".to_string(),
         }
     }
 }
@@ -387,5 +387,3 @@ mod tests {
         assert_eq!(track.clips.len(), 0);
     }
 }
-
-// Made with Bob

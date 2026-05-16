@@ -144,5 +144,3 @@ export const AudioClip: React.FC<AudioClipProps> = ({
     </div>
   );
 };
-
-// Made with Bob

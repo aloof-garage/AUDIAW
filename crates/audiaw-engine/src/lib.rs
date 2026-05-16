@@ -1605,5 +1605,3 @@ mod tests {
         assert_eq!(tracks[0].clips.len(), 3);
     }
 }
-
-// Made with Bob

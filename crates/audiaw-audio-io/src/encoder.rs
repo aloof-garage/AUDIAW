@@ -392,7 +392,7 @@ mod tests {
         let mut samples = vec![0.5, -0.5, 0.25, -0.25];
         normalize_samples(&mut samples, -0.1);
 
-        // Peak should be close to 10^(-0.1/20) ≈ 0.989
+        // Peak should be close to 10^(-0.1/20), about 0.989.
         let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
         assert!((peak - 0.989).abs() < 0.01);
     }
@@ -426,5 +426,3 @@ mod tests {
         }
     }
 }
-
-// Made with Bob

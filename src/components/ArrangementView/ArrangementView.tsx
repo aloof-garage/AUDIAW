@@ -91,5 +91,3 @@ export const ArrangementView: React.FC = () => {
     </div>
   );
 };
-
-// Made with Bob

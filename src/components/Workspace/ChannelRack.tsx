@@ -43,5 +43,3 @@ export const ChannelRack = () => {
     </section>
   );
 };
-
-// Made with Bob

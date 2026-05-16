@@ -27,5 +27,3 @@ export const MainWorkspace = () => {
     </>
   );
 };
-
-// Made with Bob

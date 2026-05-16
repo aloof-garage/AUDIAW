@@ -208,5 +208,3 @@ export const TrackControls: React.FC<TrackControlsProps> = ({
     </div>
   );
 };
-
-// Made with Bob

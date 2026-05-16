@@ -1,24 +1,95 @@
 # AUDIAW
 
-AUDIAW is a v1.0 desktop digital audio workstation built with React, TypeScript, Vite, Tauri, and Rust. The app supports an end-to-end production workflow: create a project, add sounds/instruments, edit MIDI, arrange clips, mix, automate, play back, save/load, and render a WAV.
+AUDIAW is a cross-platform desktop digital audio workstation built with React, TypeScript, Tauri, and Rust.
 
-## Current V1 Surface
+The v1.0 app focuses on a complete local production workflow: create a project, arrange clips, edit MIDI, mix tracks, write automation, save/load `.audiaw` project files, and export a WAV mixdown.
 
-- Arrangement timeline with draggable clips and snap-oriented editing.
-- Browser-to-arrangement sample drag/drop.
-- Clip resizing, duplication, deletion, splitting, and renaming.
-- Audio-style clips driven by an internal sampler/drum synthesis layer.
-- MIDI tracks with synth, bass, and pad playback using Web Audio.
-- Piano roll note editing: double-click to add, drag to move, double-click note to delete.
-- Mixer controls for volume, pan, mute, solo, meters, and send routing.
-- Inspector with channel controls, device/effect chain, routing, and volume automation point writing.
-- Browser workflows for assigning samples and inserting built-in plugin concepts.
-- Transport with play, stop, record state, loop, playhead sync, and keyboard shortcuts.
-- File-backed `.audiaw` project documents, autosave recovery, and recent projects.
-- Undo/redo for track, clip, MIDI, plugin, sample, routing, and automation edits.
-- Offline WAV rendering through `OfflineAudioContext`.
+## Features
 
-## Shortcuts
+- Desktop app for Windows, macOS, and Linux
+- Arrangement timeline with draggable, resizable, splittable clips
+- MIDI piano roll with note creation, editing, and deletion
+- Mixer with volume, pan, mute, solo, sends, and meters
+- Transport controls with playback, stop, loop, record state, and shortcuts
+- Project save/load using portable `.audiaw` files
+- Autosave recovery and recent projects
+- Browser workflow for samples, built-in plugin concepts, and projects
+- Offline WAV export from the master output
+- GitHub Releases pipeline for installers and release artifacts
+
+## Downloads
+
+Production builds are published from [GitHub Releases](https://github.com/aloof-garage/AUDIAW/releases/latest).
+
+| Platform | Asset |
+| --- | --- |
+| Windows installer | `AUDIAW-windows-x64-setup.exe` |
+| Windows portable | `AUDIAW-windows-x64-portable.exe` |
+| macOS | `AUDIAW-macos.dmg` |
+| Linux | `AUDIAW-linux-x86_64.AppImage` |
+
+## Requirements
+
+- Rust 1.75+
+- Node.js 20+
+- pnpm 9+
+- Platform build tools for Tauri
+
+See [INSTALLATION.md](INSTALLATION.md) for detailed setup.
+
+## Development
+
+Install dependencies:
+
+```bash
+pnpm install
+```
+
+Run the desktop app in development mode:
+
+```bash
+pnpm dev
+```
+
+Run the main verification checks:
+
+```bash
+npm run build:frontend
+cargo check
+```
+
+Build the desktop release for your current platform:
+
+```bash
+npm run build
+```
+
+Windows-specific release build:
+
+```bash
+npm run build:windows
+```
+
+## Project Structure
+
+```text
+src/                 React app, DAW UI, project workflow, Web Audio render path
+src-tauri/           Tauri desktop shell, native commands, packaging config
+crates/              Rust audio, project, effects, history, and shared type crates
+.github/workflows/   Release automation
+audiaw-marketing/    Website and download page
+```
+
+## Documentation
+
+- [INSTALLATION.md](INSTALLATION.md) - install and local setup
+- [CONTRIBUTING.md](CONTRIBUTING.md) - contribution workflow
+- [HOW_TO_RELEASE.md](HOW_TO_RELEASE.md) - beginner-friendly release guide
+- [ARCHITECTURE.md](ARCHITECTURE.md) - real system architecture
+- [DEVELOPMENT.md](DEVELOPMENT.md) - contributor development guide
+- [CHANGELOG.md](CHANGELOG.md) - version history
+
+## Common Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
@@ -27,85 +98,23 @@ AUDIAW is a v1.0 desktop digital audio workstation built with React, TypeScript,
 | `Ctrl+K` | Command palette |
 | `Ctrl+E` | Export mixdown |
 | `Ctrl+S` | Save project |
-| `Ctrl+O` | Load saved project |
+| `Ctrl+Shift+S` | Save project as |
+| `Ctrl+O` | Open project |
 | `Ctrl+N` | New project |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | `Ctrl+D` | Duplicate selected clip |
 | `Delete` / `Backspace` | Delete selected clip |
-| `Ctrl+1` | Arrangement |
-| `Ctrl+2` | Mixer |
-| `Ctrl+3` | Piano roll |
-| `Ctrl+B` | Toggle browser |
-| `Ctrl+I` | Toggle inspector |
-| `Ctrl+J` | Toggle bottom panel |
-| `V`, `B`, `C` | Pointer, pencil, scissors tools / split selected clip |
-| `L`, `R` | Loop, record state |
+| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | Arrangement, mixer, piano roll |
 
-## Downloads
+## Release
 
-Release binaries are published from [GitHub Releases](https://github.com/aloof-garage/AUDIAW/releases/latest):
+Releases use semantic version tags such as `v1.0.0`. Pushing a release tag runs GitHub Actions, builds Windows/macOS/Linux artifacts, and uploads them to GitHub Releases.
 
-- Windows installer: `AUDIAW-windows-x64-setup.exe`
-- Windows portable: `AUDIAW-windows-x64-portable.exe`
-- macOS DMG: `AUDIAW-macos.dmg`
-- Linux AppImage: `AUDIAW-linux-x86_64.AppImage`
+See [HOW_TO_RELEASE.md](HOW_TO_RELEASE.md) for the full step-by-step process.
 
-## Quick Start
+## Contributing
 
-```bash
-pnpm install
-node_modules\.bin\vite.CMD --host 127.0.0.1 --port 5173
-```
-
-Open `http://127.0.0.1:5173`.
-
-For the Tauri desktop app:
-
-```bash
-pnpm dev
-```
-
-## Production Workflow
-
-1. Open AUDIAW. A starter project loads with drums, bass, synth, atmosphere, vocals, returns, and master.
-2. Select a track in the arrangement.
-3. Use the browser to assign a sample or insert a plugin concept.
-4. Double-click an arrangement lane to create clips, or drag samples from the browser onto tracks.
-5. Open Piano Roll and double-click the grid to add MIDI notes.
-6. Move, resize, split, duplicate, rename, and delete clips while arranging.
-7. Press `Space` to play. Adjust mixer volume, pan, mute, solo, and send values.
-8. Record an armed/selected track with `R`; stopping record commits a new take clip.
-9. Write volume automation from the Inspector while the playhead is positioned.
-10. Use `Ctrl+S` to save, `Ctrl+Z` / `Ctrl+Y` to edit safely.
-11. Use `Ctrl+E` and Start Export to render a WAV.
-
-## Architecture
-
-```text
-src/App.tsx                 Main DAW shell, project workflow, and Web Audio render path
-src/components/             Reusable UI surfaces retained for modularization
-src/stores/                 Zustand/Tauri stores retained for backend integration
-src-tauri/                  Tauri shell and Rust command layer
-crates/                     Rust audio/project crates
-DOCS/AUDIAW-DESIGN.md       UI/UX source of truth
-DOCS/                       Product, architecture, roadmap, and development documentation
-```
-
-The current frontend audio path uses Web Audio for deterministic local playback and offline rendering in browser/Tauri webview contexts. The Rust/Tauri layer provides desktop packaging, filesystem commands, dialogs, project IO, and native audio engine integration points.
-
-## Verification
-
-```bash
-node_modules\.bin\tsc.CMD --noEmit
-npm run build:frontend
-cargo check
-npm run build:windows
-```
-
-## Release Process
-
-See [RELEASE.md](RELEASE.md) for versioning, local verification, artifact names, and GitHub Release publishing.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), keep changes focused, and run the verification commands before opening a pull request.
 
 ## License
 

@@ -93,5 +93,3 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(({
 });
 
 TimelineRuler.displayName = 'TimelineRuler';
-
-// Made with Bob

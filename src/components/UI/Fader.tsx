@@ -123,5 +123,3 @@ export const Fader: React.FC<FaderProps> = ({
     </div>
   );
 };
-
-// Made with Bob

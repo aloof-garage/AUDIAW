@@ -65,7 +65,7 @@ export const Timeline: React.FC = () => {
           className="px-2 py-1 text-xs bg-surface-2 hover:bg-surface-3 rounded border border-DEFAULT transition-colors duration-standard"
           title="Zoom Out"
         >
-          −
+          -
         </button>
         <button
           onClick={resetZoom}
@@ -113,5 +113,3 @@ export const Timeline: React.FC = () => {
     </div>
   );
 };
-
-// Made with Bob

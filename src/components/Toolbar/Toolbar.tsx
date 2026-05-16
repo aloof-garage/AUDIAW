@@ -183,5 +183,3 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onExport }) => {
     </div>
   );
 };
-
-// Made with Bob

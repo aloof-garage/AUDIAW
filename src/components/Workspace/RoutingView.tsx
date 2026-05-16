@@ -40,5 +40,3 @@ export const RoutingView = () => {
     </section>
   );
 };
-
-// Made with Bob

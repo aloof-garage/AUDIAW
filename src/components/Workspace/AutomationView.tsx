@@ -55,5 +55,3 @@ export const AutomationView = () => {
     </section>
   );
 };
-
-// Made with Bob

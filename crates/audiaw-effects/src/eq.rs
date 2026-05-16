@@ -361,5 +361,3 @@ mod tests {
         assert_ne!(left[50], 0.1);
     }
 }
-
-// Made with Bob

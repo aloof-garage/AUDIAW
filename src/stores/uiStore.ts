@@ -143,5 +143,3 @@ export const useUIStore = create<UIState>((set, get) => ({
   
   setTheme: (theme) => set({ theme }),
 }));
-
-// Made with Bob

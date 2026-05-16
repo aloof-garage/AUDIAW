@@ -234,12 +234,10 @@ export const TransportBar: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <span>48kHz</span>
-          <span>•</span>
+          <span>|</span>
           <span>512</span>
         </div>
       </div>
     </div>
   );
 };
-
-// Made with Bob

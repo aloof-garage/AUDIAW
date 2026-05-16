@@ -657,5 +657,3 @@ mod tests {
         assert_eq!(loaded.config.output_channels, 8);
     }
 }
-
-// Made with Bob

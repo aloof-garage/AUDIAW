@@ -573,5 +573,3 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return undefined;
   },
 }));
-
-// Made with Bob

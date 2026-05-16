@@ -213,5 +213,3 @@ mod tests {
         assert_eq!(effect.name(), "Gain");
     }
 }
-
-// Made with Bob

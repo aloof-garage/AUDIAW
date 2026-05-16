@@ -169,5 +169,3 @@ mod tests {
         assert!(effect.set_parameter("gain_db", 100.0).is_err());
     }
 }
-
-// Made with Bob

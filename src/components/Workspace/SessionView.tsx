@@ -78,5 +78,3 @@ export const SessionView = () => {
     </section>
   );
 };
-
-// Made with Bob

@@ -185,5 +185,3 @@ export const useDawStore = create<DawState>((set) => ({
     automationLanes: state.automationLanes.map((lane) => lane.id === laneId ? { ...lane, mode } : lane),
   })),
 }));
-
-// Made with Bob

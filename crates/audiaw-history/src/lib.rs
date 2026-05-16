@@ -661,5 +661,3 @@ mod tests {
         assert_eq!(state.tracks.len(), 2);
     }
 }
-
-// Made with Bob

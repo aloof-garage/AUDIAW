@@ -104,5 +104,3 @@ impl EffectsManager {
             .unwrap_or(0)
     }
 }
-
-// Made with Bob

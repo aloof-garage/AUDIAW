@@ -185,5 +185,3 @@ export const useTransportStore = create<TransportState>((set, get) => ({
     return Math.floor(seconds * sampleRate);
   },
 }));
-
-// Made with Bob

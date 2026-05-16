@@ -60,5 +60,3 @@ export const PianoRoll = () => {
     </section>
   );
 };
-
-// Made with Bob

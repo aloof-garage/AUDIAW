@@ -1,7 +1,6 @@
 /**
  * AUDIAW Theme System
  * Professional DAW color palette and design tokens
- * Aligned with AUDIAW-DESIGN.md specifications
  */
 
 export const theme = {
@@ -166,5 +165,3 @@ export type Theme = typeof theme;
 export const withOpacity = (color: string, opacity: number): string => {
   return `${color}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`;
 };
-
-// Made with Bob

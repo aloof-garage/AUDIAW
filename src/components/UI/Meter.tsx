@@ -105,5 +105,3 @@ export const Meter: React.FC<MeterProps> = React.memo(({
 });
 
 Meter.displayName = 'Meter';
-
-// Made with Bob

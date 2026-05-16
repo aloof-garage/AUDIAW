@@ -67,5 +67,3 @@ export const SettingsView = () => {
     </section>
   );
 };
-
-// Made with Bob
