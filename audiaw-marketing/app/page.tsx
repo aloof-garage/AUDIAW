@@ -37,19 +37,22 @@ const downloadOptions = [
     platform: "Windows",
     detail: "x64 setup installer",
     icon: MonitorDown,
-    href: `${releaseAssetUrl}/AUDIAW-windows-x64-setup.exe`,
+    href: `/downloads/AUDIAW-Setup.exe`,
+    available: true,
   },
   {
     platform: "macOS",
     detail: "DMG desktop app",
     icon: Laptop,
     href: `${releaseAssetUrl}/AUDIAW-macos.dmg`,
+    available: false,
   },
   {
     platform: "Linux",
     detail: "x86_64 AppImage",
     icon: Terminal,
     href: `${releaseAssetUrl}/AUDIAW-linux-x86_64.AppImage`,
+    available: false,
   },
 ];
 
@@ -269,18 +272,36 @@ export default function Home() {
               const Icon = option.icon;
               return (
                 <Reveal key={option.platform} delay={index * 0.08}>
-                  <a
-                    href={option.href}
-                    className="download-focus group block min-h-[220px] border border-white/10 bg-white/[0.035] p-6 transition duration-200 hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.06]"
-                    aria-label={`Download AUDIAW for ${option.platform}`}
-                  >
-                    <Icon className="h-8 w-8 text-primary" />
-                    <h3 className="mt-10 text-2xl font-medium">{option.platform}</h3>
-                    <p className="mt-3 leading-7 text-secondary">{option.detail}</p>
-                    <div className="mt-8 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.16em] text-primary">
-                      Download <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  {option.available ? (
+                    <a
+                      href={option.href}
+                      className="download-focus group block min-h-[220px] border border-white/10 bg-white/[0.035] p-6 transition duration-200 hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.06]"
+                      aria-label={`Download AUDIAW for ${option.platform}`}
+                    >
+                      <Icon className="h-8 w-8 text-primary" />
+                      <h3 className="mt-10 text-2xl font-medium">{option.platform}</h3>
+                      <p className="mt-3 leading-7 text-secondary">{option.detail}</p>
+                      <div className="mt-8 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.16em] text-primary">
+                        Download <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                      </div>
+                    </a>
+                  ) : (
+                    <div
+                      className="relative block min-h-[220px] cursor-not-allowed border border-white/10 bg-white/[0.035] p-6 opacity-60"
+                      aria-disabled="true"
+                      aria-label={`${option.platform} version coming soon`}
+                    >
+                      <div className="absolute right-4 top-4 border border-white/20 bg-white/[0.08] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-secondary">
+                        Coming Soon
+                      </div>
+                      <Icon className="h-8 w-8 text-primary" />
+                      <h3 className="mt-10 text-2xl font-medium">{option.platform}</h3>
+                      <p className="mt-3 leading-7 text-secondary">{option.detail}</p>
+                      <div className="mt-8 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.16em] text-tertiary">
+                        Download <ArrowRight className="h-4 w-4" />
+                      </div>
                     </div>
-                  </a>
+                  )}
                 </Reveal>
               );
             })}

@@ -9,3 +9,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vercel/
+
+# Downloads folder
+# Keep the folder structure tracked but optionally ignore large binaries
+# Exception: AUDIAW-Setup.exe is tracked for deployment
+public/downloads/*.exe
+!public/downloads/AUDIAW-Setup.exe
+public/downloads/*.msi
+public/downloads/*.dmg
+public/downloads/*.AppImage
+!public/downloads/.gitkeep
