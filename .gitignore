@@ -28,4 +28,19 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Code Signing & Certificates
+*.pfx
+*.p12
+*.cer
+*.crt
+*.pem
+*.key
+*.keystore
+*.jks
+.env
+.env.local
+.env.*.local
+certificates/
+certs/
+
 # Made with Bob

@@ -2,7 +2,7 @@
 name = "audiaw"
 version = "1.0.0"
 description = "Professional Open-Source Digital Audio Workstation"
-authors = ["AUDIAW Contributors"]
+authors = ["Aloof Garage"]
 license = "GPL-3.0"
 repository = "https://github.com/aloof-garage/AUDIAW"
 edition = "2021"
