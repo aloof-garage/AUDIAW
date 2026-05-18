@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "AUDIAW",
+        "title": "AUDIAW - Professional Digital Audio Workstation",
         "width": 1400,
         "height": 900,
         "minWidth": 1024,
@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;"
     }
   },
   "bundle": {
@@ -39,29 +39,18 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "copyright": "Copyright (c) 2026 AUDIAW Contributors",
-    "category": "Music",
+    "copyright": "Copyright © 2026 Aloof Garage. All rights reserved.",
+    "category": "AudioVideo",
     "shortDescription": "Professional Open-Source Digital Audio Workstation",
-    "longDescription": "AUDIAW is a cross-platform DAW built with Rust and React, designed to provide professional music production capabilities with zero cost and complete transparency.",
+    "longDescription": "AUDIAW is a professional, cross-platform Digital Audio Workstation (DAW) built with Rust and React. Designed for musicians, producers, and audio engineers, AUDIAW provides enterprise-grade music production capabilities with complete transparency and zero licensing costs. Features include multi-track recording, advanced mixing, professional effects processing, and comprehensive MIDI support.",
     "homepage": "https://audiaw.com",
     "publisher": "Aloof Garage",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
-      "timestampUrl": "",
+      "timestampUrl": "http://timestamp.digicert.com",
       "webviewInstallMode": {
-        "type": "downloadBootstrapper"
-      },
-      "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "installMode": "currentUser",
-        "languages": ["English"],
-        "displayLanguageSelector": false,
-        "template": null,
-        "headerImage": null,
-        "sidebarImage": null,
-        "installerHooks": null,
-        "compression": "lzma"
+        "type": "embedBootstrapper"
       }
     },
     "macOS": {
@@ -74,7 +63,14 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [
+          "libasound2",
+          "libpulse0"
+        ],
+        "section": "sound"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
     }
   },

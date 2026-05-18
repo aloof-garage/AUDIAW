@@ -1,219 +1,237 @@
 # AUDIAW Downloads Folder
 
-This folder contains the AUDIAW desktop application installer files that are served to users through the marketing website.
+This folder is maintained for backward compatibility and local testing, but **production downloads now use GitHub Releases**.
 
-## Current Files
+## Current Download Strategy
 
-- **AUDIAW-Setup.exe** - Windows installer for AUDIAW (tracked in git)
-- **.gitkeep** - Ensures the folder structure is maintained in git
+### Production (Recommended)
+All download links on the website point to **GitHub Releases**:
+- **URL Format:** `https://github.com/aloof-garage/AUDIAW/releases/latest/download/AUDIAW-Setup.exe`
+- **Benefits:**
+  - No large binaries in git repository
+  - Automatic versioning through GitHub
+  - Reliable CDN delivery via GitHub
+  - Easy rollback to previous versions
+  - No repository size bloat
 
-## Deployment Configuration
+### Local Files (Backup/Testing)
+- **AUDIAW-Setup.exe** - Windows installer (3.2MB, tracked in git for fallback)
+- **.gitkeep** - Ensures folder structure is maintained
 
-### Git Tracking
+## How It Works
 
-The `AUDIAW-Setup.exe` file is **explicitly tracked in git** despite the general `.gitignore` pattern that excludes `.exe` files. This is necessary for Vercel deployment.
+### Website Configuration
+The landing page (`app/page.tsx`) uses GitHub Release URLs:
+```typescript
+const releaseAssetUrl = `${repoUrl}/releases/latest/download`;
 
-**Why tracked in git?**
-- Vercel deploys only files that are committed to the repository
-- Binary files in `public/` folder need to be in git to be served
-- The negation pattern `!public/downloads/AUDIAW-Setup.exe` in `.gitignore` allows this specific file
+const downloadOptions = [
+  {
+    platform: "Windows",
+    href: `${releaseAssetUrl}/AUDIAW-Setup.exe`,
+    available: true,
+  },
+  // ... other platforms
+];
+```
 
 ### Download Headers
-
-Download files are configured with proper HTTP headers in two places for redundancy:
+Headers are configured for the `/downloads/` path (for local fallback):
 
 1. **vercel.json** - Vercel-specific configuration
 2. **next.config.ts** - Next.js headers configuration
 
 **Headers applied:**
-- `Content-Disposition: attachment` - Forces browser to download instead of displaying
-- `Cache-Control: public, max-age=31536000, immutable` - Aggressive caching for performance
-- `X-Content-Type-Options: nosniff` - Security header to prevent MIME type sniffing
+- `Content-Disposition: attachment` - Forces browser to download
+- `Cache-Control: public, max-age=31536000, immutable` - Aggressive caching
+- `X-Content-Type-Options: nosniff` - Security header
 
-## Updating the Installer
+## Releasing a New Version
 
-### Step 1: Build the new installer
+### Step 1: Build the installer
 ```bash
 # From the root of the AUDIAW project
 npm run tauri build
 ```
 
-### Step 2: Copy the new installer
+### Step 2: Create a GitHub Release
 ```bash
-# Copy from Tauri build output to marketing site
-cp src-tauri/target/release/bundle/nsis/AUDIAW_*_x64-setup.exe audiaw-marketing/public/downloads/AUDIAW-Setup.exe
+# Tag the release
+git tag -a v1.0.0 -m "Release version 1.0.0"
+git push origin v1.0.0
+
+# Or use GitHub CLI
+gh release create v1.0.0 \
+  src-tauri/target/release/bundle/nsis/AUDIAW_*_x64-setup.exe#AUDIAW-Setup.exe \
+  --title "AUDIAW v1.0.0" \
+  --notes "Release notes here"
 ```
 
-### Step 3: Force add to git
-```bash
-cd audiaw-marketing
-git add -f public/downloads/AUDIAW-Setup.exe
-```
+### Step 3: Rename the asset (if needed)
+When uploading to GitHub Releases, ensure the file is named exactly:
+- `AUDIAW-Setup.exe` (for Windows)
+- `AUDIAW-macos.dmg` (for macOS, when available)
+- `AUDIAW-linux-x86_64.AppImage` (for Linux, when available)
 
-### Step 4: Commit and push
+### Step 4: Verify the download
+Test the GitHub Release URL:
 ```bash
-git commit -m "Update AUDIAW installer to version X.Y.Z"
-git push
-```
-
-### Step 5: Verify deployment
-After Vercel deploys, test the download:
-```bash
-curl -I https://your-domain.com/downloads/AUDIAW-Setup.exe
+curl -I https://github.com/aloof-garage/AUDIAW/releases/latest/download/AUDIAW-Setup.exe
 ```
 
 Check for:
-- `Content-Disposition: attachment` header
-- `200 OK` status
-- Correct file size
+- `302 Found` redirect to actual download URL
+- Final `200 OK` status
+- Correct file size in `Content-Length` header
 
-## File Size Considerations
+### Step 5: Website automatically updates
+The website uses `/releases/latest/download/` which automatically serves the newest release.
+No website deployment needed!
 
-### Current Approach
-- **Pros:**
-  - Simple deployment process
-  - No external dependencies
-  - Fast CDN delivery via Vercel
-  - Version control of installers
+## Advantages of GitHub Releases Strategy
 
-- **Cons:**
-  - Large binary files in git repository
-  - Increases repository size over time
-  - Git is not optimized for binary files
+### Benefits
+✅ **No repository bloat** - Binaries stored separately from code
+✅ **Automatic versioning** - Each release is tagged and versioned
+✅ **Reliable CDN** - GitHub's global CDN serves downloads
+✅ **Easy rollback** - Previous versions remain accessible
+✅ **Changelog integration** - Release notes alongside downloads
+✅ **Free hosting** - No additional costs for file storage
+✅ **Bandwidth** - GitHub handles all download traffic
+✅ **Security** - GitHub's infrastructure and checksums
 
-### Repository Size Management
+### Comparison with Alternatives
 
-**Current file size:** Check with:
-```bash
-ls -lh audiaw-marketing/public/downloads/AUDIAW-Setup.exe
-```
+| Strategy | Repo Size | Cost | Complexity | Reliability |
+|----------|-----------|------|------------|-------------|
+| **GitHub Releases** ✅ | Clean | Free | Low | High |
+| Git LFS | Moderate | Paid | Medium | Medium |
+| External Storage (S3) | Clean | Paid | High | High |
+| Vercel Blob | Clean | Paid | Medium | High |
+| Direct in Repo | Bloated | Free | Low | Medium |
 
-**Monitor repository size:**
-```bash
-git count-objects -vH
-```
+### Why GitHub Releases Wins
+- **Zero cost** for open-source projects
+- **Zero configuration** beyond creating releases
+- **Automatic latest** via `/releases/latest/download/` URL
+- **Built-in versioning** with git tags
+- **Community standard** for distributing software
 
-### Alternative Deployment Strategies
-
-If the repository becomes too large, consider these alternatives:
-
-#### Option 1: Git LFS (Large File Storage)
-```bash
-# Install Git LFS
-git lfs install
-
-# Track the exe file with LFS
-git lfs track "audiaw-marketing/public/downloads/*.exe"
-
-# Add and commit
-git add .gitattributes
-git add audiaw-marketing/public/downloads/AUDIAW-Setup.exe
-git commit -m "Move installer to Git LFS"
-```
-
-**Note:** Vercel supports Git LFS, but it counts against your bandwidth quota.
-
-#### Option 2: External Storage (S3, R2, etc.)
-- Upload installers to cloud storage (AWS S3, Cloudflare R2)
-- Update download links to point to storage URLs
-- Implement signed URLs for security if needed
-- Remove binary from git repository
-
-#### Option 3: GitHub Releases
-- Attach installers to GitHub releases
-- Update download links to GitHub release assets
-- Automatic versioning and changelog
-- No impact on repository size
-
-#### Option 4: Vercel Blob Storage
-- Use Vercel's blob storage for large files
-- Upload via Vercel CLI or API
-- Serve through Vercel's CDN
-- Pay-per-use pricing
-
-## Security Considerations
-
-### File Integrity
-Consider adding checksums for download verification:
-
-```bash
-# Generate SHA256 checksum
-sha256sum AUDIAW-Setup.exe > AUDIAW-Setup.exe.sha256
-
-# Users can verify:
-sha256sum -c AUDIAW-Setup.exe.sha256
-```
+## Security & Integrity
 
 ### Code Signing
-For production releases, the installer should be code-signed:
+The Windows installer should be code-signed before release:
 - Prevents Windows SmartScreen warnings
 - Verifies publisher identity
 - Increases user trust
+- See `WINDOWS_SIGNING_AND_RELEASE.md` for details
+
+### Checksums
+GitHub automatically provides SHA256 checksums for all release assets.
+Users can verify downloads using GitHub's checksums.
+
+### HTTPS
+All downloads are served over HTTPS:
+- GitHub Releases: `https://github.com/...`
+- Ensures integrity during download
+- Prevents man-in-the-middle attacks
 
 ## Troubleshooting
 
-### Download not working on Vercel
+### Download not working from GitHub
 
-1. **Check if file is in git:**
+1. **Check if release exists:**
    ```bash
-   git ls-files audiaw-marketing/public/downloads/AUDIAW-Setup.exe
+   gh release view latest
    ```
-   Should return the file path if tracked.
 
-2. **Check Vercel deployment logs:**
-   - Look for file size warnings
-   - Check if file was included in deployment
-
-3. **Verify headers:**
+2. **Verify asset name:**
    ```bash
-   curl -I https://your-domain.com/downloads/AUDIAW-Setup.exe
+   gh release view latest --json assets
    ```
+   Asset must be named exactly `AUDIAW-Setup.exe`
 
-4. **Check .gitignore:**
-   Ensure the negation pattern is present:
+3. **Test the URL:**
+   ```bash
+   curl -I https://github.com/aloof-garage/AUDIAW/releases/latest/download/AUDIAW-Setup.exe
    ```
-   public/downloads/*.exe
-   !public/downloads/AUDIAW-Setup.exe
-   ```
+   Should return `302 Found` redirect
 
-### File size limits
+4. **Check release visibility:**
+   - Release must be published (not draft)
+   - Repository must be public or user must have access
 
-- **Git:** No hard limit, but large files slow down operations
-- **GitHub:** Warning at 50MB, block at 100MB (use Git LFS)
-- **Vercel:** 100MB per file limit for deployments
-- **Git LFS:** 1GB free storage, then paid tiers
+### Local fallback not working
+
+If you need to serve from `/downloads/` locally:
+1. Ensure file is in git: `git ls-files public/downloads/`
+2. Check Vercel deployment logs
+3. Verify headers with: `curl -I https://your-domain.com/downloads/AUDIAW-Setup.exe`
 
 ## Best Practices
 
-1. **Version naming:** Consider including version in filename:
+1. **Consistent naming:** Always use exact filenames:
+   - `AUDIAW-Setup.exe` (Windows)
+   - `AUDIAW-macos.dmg` (macOS)
+   - `AUDIAW-linux-x86_64.AppImage` (Linux)
+
+2. **Release workflow:**
+   ```bash
+   # 1. Build
+   npm run tauri build
+   
+   # 2. Tag version
+   git tag -a v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   
+   # 3. Create release with asset
+   gh release create v1.0.0 \
+     src-tauri/target/release/bundle/nsis/AUDIAW_*_x64-setup.exe#AUDIAW-Setup.exe \
+     --title "AUDIAW v1.0.0" \
+     --notes-file RELEASE_NOTES.md
    ```
-   AUDIAW-Setup-v1.0.0.exe
-   ```
 
-2. **Keep old versions:** For rollback capability:
-   ```
-   AUDIAW-Setup-v1.0.0.exe
-   AUDIAW-Setup-v1.1.0.exe
-   AUDIAW-Setup.exe (symlink or copy of latest)
-   ```
+3. **Testing checklist:**
+   - [ ] Build completes successfully
+   - [ ] Installer is code-signed (production)
+   - [ ] GitHub release is published
+   - [ ] Download URL works: `curl -I https://github.com/aloof-garage/AUDIAW/releases/latest/download/AUDIAW-Setup.exe`
+   - [ ] Website download button works
+   - [ ] Installer runs and installs correctly
 
-3. **Automated updates:** Create a script to automate the update process
+4. **Version management:**
+   - Use semantic versioning (v1.0.0, v1.1.0, etc.)
+   - Tag releases in git
+   - Write clear release notes
+   - Keep previous releases available for rollback
 
-4. **Release notes:** Maintain a changelog alongside installers
+## Maintenance
 
-5. **Testing:** Always test downloads after deployment
+### Regular Checks
+- **Per release:** Test download functionality
+- **Monthly:** Review GitHub release analytics
+- **Quarterly:** Update documentation if process changes
 
-## Maintenance Schedule
+### Monitoring
+- Check GitHub release download counts
+- Monitor user feedback on installation issues
+- Track Windows SmartScreen warnings (indicates need for code signing)
 
-- **Weekly:** Check download functionality
-- **Monthly:** Review repository size
-- **Per release:** Update installer and verify deployment
-- **Quarterly:** Evaluate alternative storage strategies if needed
+## Quick Reference
 
-## Contact
+### Current Setup
+- **Strategy:** GitHub Releases (production-ready)
+- **Windows URL:** `https://github.com/aloof-garage/AUDIAW/releases/latest/download/AUDIAW-Setup.exe`
+- **Fallback:** Local file in `public/downloads/` (3.2MB, tracked in git)
+- **Headers:** Configured in `vercel.json` and `next.config.ts`
 
-For issues with the download system, contact the development team or check the main project documentation.
+### Key Files
+- `app/page.tsx` - Download button configuration
+- `vercel.json` - Vercel deployment headers
+- `next.config.ts` - Next.js headers
+- `.gitignore` - File tracking rules
 
 ---
 
-Last updated: 2026-05-18
+**Last updated:** 2026-05-18
+**Strategy:** GitHub Releases (recommended for production)

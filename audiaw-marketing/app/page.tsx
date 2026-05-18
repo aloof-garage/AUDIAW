@@ -37,7 +37,7 @@ const downloadOptions = [
     platform: "Windows",
     detail: "x64 setup installer",
     icon: MonitorDown,
-    href: `/downloads/AUDIAW-Setup.exe`,
+    href: `${releaseAssetUrl}/AUDIAW-Setup.exe`,
     available: true,
   },
   {
